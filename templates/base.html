@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}SalesAI | Intelligent Workbench{% endblock %}</title>
+    <!-- Tailwind CSS (v3.4) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Outfit', sans-serif; }
+        
+        /* Custom Animations */
+        @keyframes slideIn { from { transform: translateX(-20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .slide-in { animation: slideIn 0.4s ease-out; }
+        
+        .nav-link.active {
+            background-color: #eff6ff;
+            color: #2563eb;
+            border-right: 4px solid #2563eb;
+        }
+
+        /* Typing Dots */
+        .typing-dot { animation: typing 1.4s infinite ease-in-out; }
+        @keyframes typing { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-gray-50 flex h-screen overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside class="w-64 bg-white border-r border-gray-200 flex flex-col hidden md:flex z-50">
+        <div class="p-6 border-b border-gray-100 flex items-center">
+            <div class="bg-blue-600 rounded-lg p-2 mr-3 shadow-lg shadow-blue-200">
+                <i data-lucide="bot" class="text-white w-5 h-5"></i>
+            </div>
+            <span class="font-bold text-lg text-gray-900 tracking-tight">SalesAI Studio</span>
+        </div>
+
+        <nav class="flex-1 p-4 space-y-2 mt-4">
+            <a href="{% url 'home' %}" class="nav-link flex items-center px-4 py-3 text-sm font-medium text-gray-600 rounded-xl hover:bg-gray-50 transition-all group {% if request.resolver_match.url_name == 'home' %}active{% endif %}">
+                <i data-lucide="message-square" class="w-5 h-5 mr-3 group-hover:scale-110 transition-transform"></i>
+                AI Chat
+            </a>
+            <!--
+            <a href="{% url 'chat_upload' %}" class="nav-link flex items-center px-4 py-3 text-sm font-medium text-gray-600 rounded-xl hover:bg-gray-50 transition-all group {% if request.resolver_match.url_name == 'chat_upload' %}active{% endif %}">
+                <i data-lucide="files" class="w-5 h-5 mr-3 group-hover:scale-110 transition-transform"></i>
+                Knowledge Base
+            </a>
+            <div class="pt-4 pb-2 px-4">
+                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Settings</p>
+            </div>
+            <a href="#" class="nav-link flex items-center px-4 py-3 text-sm font-medium text-gray-600 rounded-xl hover:bg-gray-50 transition-all group">
+                <i data-lucide="settings" class="w-5 h-5 mr-3 group-hover:rotate-45 transition-transform"></i>
+                Configuration
+            </a>
+            -->
+        </nav>
+
+        <div class="p-4 border-t border-gray-100">
+            <div class="bg-blue-50 rounded-2xl p-4">
+                <p class="text-xs font-semibold text-blue-700 mb-1">Status</p>
+                <div class="flex items-center text-[10px] text-blue-600 font-medium">
+                    <span class="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
+                    Graph Engine Active
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="flex-1 flex flex-col relative min-w-0">
+        <!-- Header -->
+        <header class="bg-white/80 backdrop-blur-md border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+            <div class="flex items-center">
+                <button class="md:hidden mr-4 p-1 rounded-md hover:bg-gray-100">
+                    <i data-lucide="menu" class="w-6 h-6 text-gray-600"></i>
+                </button>
+                <div class="flex items-center text-sm font-medium text-gray-500">
+                    <span class="hover:text-gray-700 cursor-pointer">Project</span>
+                    <i data-lucide="chevron-right" class="w-4 h-4 mx-2"></i>
+                    <span class="text-gray-900">{% block breadcrumb %}Dashboard{% endblock %}</span>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-4">
+                {% block header_actions %}{% endblock %}
+                <button class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-all">
+                    <i data-lucide="bell" class="w-5 h-5"></i>
+                </button>
+                <div class="h-8 w-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold ring-2 ring-white shadow-sm cursor-pointer">
+                    JS
+                </div>
+            </div>
+        </header>
+
+        <!-- Dynamic Content -->
+        {% block content %}{% endblock %}
+    </div>
+
+    <script>
+        // Initialize Lucide Icons globally
+        lucide.createIcons();
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

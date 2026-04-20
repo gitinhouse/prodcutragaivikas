@@ -1,0 +1,63 @@
+services:
+  db:
+    image: ankane/pgvector:latest
+    container_name: sales_ai_db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${DB_NAME:-sales_db}
+      POSTGRES_USER: ${DB_USER:-sales_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-sales_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-sales_user} -d ${DB_NAME:-sales_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sales_network
+
+  redis:
+    image: redis:alpine
+    container_name: sales_ai_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - sales_network
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sales_ai_web
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgres://${DB_USER:-sales_user}:${DB_PASSWORD:-sales_password}@db:5432/${DB_NAME:-sales_db}
+      - REDIS_URL=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - sales_network
+
+networks:
+  sales_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
