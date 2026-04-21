@@ -60,10 +60,31 @@ class StreamService:
     async def get_stream(cls, user_input: str, thread_id: str) -> AsyncGenerator[str, None]:
         """Runs LangGraph and yields SSE tokens."""
         logger.info(f"Starting Graph Execution Loop [Thread: {thread_id[:12]}]")
+        
+        from chatbot.models import AgentSession
+        from asgiref.sync import sync_to_async
+        
         try:
+            # --- SYNCHRONIZATION LAYER (LOAD) ---
+            session_obj, _ = await sync_to_async(AgentSession.objects.get_or_create)(
+                session_id=thread_id,
+                defaults={"sales_stage": AgentSession.Stage.DISCOVERY}
+            )
+
             graph = await cls.get_graph()
             config = {"configurable": {"thread_id": thread_id}}
-            initial_state = {"messages": [HumanMessage(content=user_input)]}
+            initial_state = {
+                "messages": [HumanMessage(content=user_input)],
+                "session_id": session_obj.session_id,
+                "sales_stage": session_obj.sales_stage,
+                "vehicle_context": session_obj.vehicle_data,
+                "sales_context": {
+                    "budget_max": float(session_obj.identified_budget) if session_obj.identified_budget else None,
+                    "style": session_obj.identified_style.get("style", None)
+                },
+                "identified_budget": float(session_obj.identified_budget) if session_obj.identified_budget else None,
+                "identified_style": session_obj.identified_style
+            }
             
             try:
                 tokens_streamed = False
@@ -102,6 +123,30 @@ class StreamService:
                 logger.error(f"FATAL: Graph Timeout for thread {thread_id}")
                 yield f"data: {json.dumps({'type': 'error', 'content': 'AI generation timed out'})}\n\n"
                 return
+
+            # --- SYNCHRONIZATION LAYER (SAVE) ---
+            try:
+                final_state = await graph.aget_state(config)
+                state_values = final_state.values
+                if state_values:
+                    session_obj.sales_stage = state_values.get("sales_stage", session_obj.sales_stage)
+                    session_obj.vehicle_data = state_values.get("vehicle_context", session_obj.vehicle_data)
+                    
+                    sales_context = state_values.get("sales_context", {})
+                    if sales_context.get("budget_max"):
+                        session_obj.identified_budget = sales_context.get("budget_max")
+                    if sales_context.get("style"):
+                        session_obj.identified_style["style"] = sales_context.get("style")
+                        
+                    # Legacy fallback
+                    if not sales_context:
+                        session_obj.identified_budget = state_values.get("identified_budget", session_obj.identified_budget)
+                        session_obj.identified_style = state_values.get("identified_style", session_obj.identified_style)
+                        
+                    await sync_to_async(session_obj.save)()
+                    logger.info(f"Session Sync Success: {session_obj.sales_stage}")
+            except Exception as e:
+                logger.error(f"Failed to sync AgentSession: {e}")
 
             logger.info(f"Graph Execution Success [Thread: {thread_id[:12]}]")
             yield f"data: {json.dumps({'type': 'stream_end'})}\n\n"

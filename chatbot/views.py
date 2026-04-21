@@ -47,7 +47,8 @@ class ChatUploadView(View):
             return render(request, self.template_name, {"error": "Invalid file type. Please upload Excel or CSV."})
         
         file_content = file_obj.read()
-        results = UploadService.process_file(file_content, file_obj.name)
+        import_type = request.POST.get('import_type', 'legacy')
+        results = UploadService.process_file(file_content, file_obj.name, import_type=import_type)
         
         if results.get("errors"):
             logger.warning(f"Upload completed with {len(results['errors'])} errors.")

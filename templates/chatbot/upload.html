@@ -27,11 +27,22 @@
         {% endif %}
 
         <!-- Upload Form -->
-        <form method="POST" enctype="multipart/form-data" class="relative group">
+        <form method="POST" enctype="multipart/form-data">
             {% csrf_token %}
-            <input type="file" name="file" id="file-upload" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="this.form.submit()">
             
-            <div class="border-2 border-dashed border-gray-200 rounded-3xl p-16 flex flex-col items-center justify-center text-center space-y-6 bg-gray-50/50 group-hover:bg-gray-50 group-hover:border-blue-300 transition-all">
+            <div class="mb-6">
+                <label for="import_type" class="block text-sm font-bold text-gray-700 mb-2">Select Import Mode</label>
+                <select name="import_type" id="import_type" class="block w-full rounded-xl border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-3 border bg-white cursor-pointer hover:border-blue-400 transition-colors">
+                    <option value="legacy">Legacy Product Catalog (Uses AI processing)</option>
+                    <option value="wheels">New Wheels (Exact Constraints)</option>
+                    <option value="fitments">Vehicle Fitments (Mapping)</option>
+                </select>
+            </div>
+
+            <div class="relative group">
+                <input type="file" name="file" id="file-upload" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="this.form.submit()">
+                
+                <div class="border-2 border-dashed border-gray-200 rounded-3xl p-16 flex flex-col items-center justify-center text-center space-y-6 bg-gray-50/50 group-hover:bg-gray-50 group-hover:border-blue-300 transition-all">
                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 group-hover:scale-110 transition-transform">
                     <i data-lucide="cloud-upload" class="w-12 h-12 text-blue-600"></i>
                 </div>

@@ -89,6 +89,34 @@ class Product(models.Model):
     def __str__(self):
         return f"{self.brand.name} - {self.name} (${self.price})"
 
+class Fitment(models.Model):
+    """
+    Relational Fitment Mapping.
+    Allows exact vehicle matching (Year, Make, Model) to specific Products.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='fitments')
+    
+    make = models.CharField(max_length=100, db_index=True)
+    model = models.CharField(max_length=100, db_index=True)
+    year_from = models.IntegerField(db_index=True)
+    year_to = models.IntegerField(db_index=True)
+    
+    # Optional constraints mapped from vendor
+    bolt_pattern = models.CharField(max_length=50, blank=True, null=True)
+    center_bore = models.FloatField(blank=True, null=True)
+    offset_min = models.FloatField(blank=True, null=True)
+    offset_max = models.FloatField(blank=True, null=True)
+
+    class Meta:
+        verbose_name = "Fitment"
+        verbose_name_plural = "Fitments"
+        indexes = [
+            models.Index(fields=['make', 'model']),
+        ]
+
+    def __str__(self):
+        return f"{self.make} {self.model} ({self.year_from}-{self.year_to}) -> {self.product.name}"
 
 class Lead(models.Model):
     """
@@ -116,3 +144,47 @@ class Order(models.Model):
 
     def __str__(self):
         return f"Order {self.id}"
+
+class AgentSession(models.Model):
+    """
+    Persistent memory for the Agentic Sales Advisor.
+    Tracks user progression through the sales stages and holds their specific constraints.
+    """
+    class Stage(models.TextChoices):
+        DISCOVERY = 'discovery', 'Discovery'
+        FITMENT_VALIDATION = 'fitment_validation', 'Fitment Validation'
+        READY_TO_RECOMMEND = 'ready_to_recommend', 'Ready to Recommend'
+        CLOSING = 'closing', 'Closing'
+
+    session_id = models.CharField(max_length=255, unique=True, primary_key=True)
+    sales_stage = models.CharField(
+        max_length=50,
+        choices=Stage.choices,
+        default=Stage.DISCOVERY,
+        db_index=True
+    )
+
+    # Context Data
+    vehicle_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Stores parsed Year, Make, Model, and specific DB-matched Type"
+    )
+    identified_budget = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True
+    )
+    identified_style = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Stores style preferences (e.g., finish, usage, off-road vs street)"
+    )
+
+    # Lead Tracking
+    lead = models.ForeignKey(Lead, on_delete=models.SET_NULL, null=True, blank=True, related_name='sessions')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Session {self.session_id} - {self.sales_stage}"
+

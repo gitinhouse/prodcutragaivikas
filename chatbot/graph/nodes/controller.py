@@ -83,18 +83,26 @@ async def controller_node(state: GraphState):
     budget_match = re.search(r'(?:budget|under|cap|max|around)\s*(?:\$)?\s*(\d{3,5})', user_query.lower())
     extracted_budget = float(budget_match.group(1)) if budget_match else None
 
-    # 0.3 ADVISOR STEP PROGRESSION
-    current_step = state.get("advisor_step", "discovery_usage")
+    # 0.3 SALES STAGE PROGRESSION
+    from chatbot.models import AgentSession
+    from chatbot.services.vehicle_service import VehicleService
+    
+    current_stage = state.get("sales_stage", AgentSession.Stage.DISCOVERY)
     adv_history = state.get("advisor_history", [])
+    vehicle_context = state.get("vehicle_context", {})
+    
+    vehicle_match = VehicleService.resolve_vehicle(user_query)
+    if vehicle_match:
+        vehicle_context.update(vehicle_match)
     
     # Progress steps based on what entities we have
-    if current_step == "discovery_usage" and (entities.get("vehicle_type") or "truck" in user_query.lower() or "suv" in user_query.lower()):
-        current_step = "discovery_vibe"
-    elif current_step == "discovery_vibe" and len(entities) > 1:
-        current_step = "technical_specs"
+    if current_stage == AgentSession.Stage.DISCOVERY and (entities.get("vehicle_type") or vehicle_context or "truck" in user_query.lower() or "suv" in user_query.lower()):
+        current_stage = AgentSession.Stage.FITMENT_VALIDATION
+    elif current_stage == AgentSession.Stage.FITMENT_VALIDATION and (len(entities) > 1 or extracted_budget):
+        current_stage = AgentSession.Stage.READY_TO_RECOMMEND
         
-    if current_step not in adv_history:
-        adv_history.append(current_step)
+    if current_stage not in adv_history:
+        adv_history.append(current_stage)
 
     # PURCHASE LOCK: If they want to buy or just provided an email/name, lock the intent
     # BUT: If they show hesitation OR ask about status OR tire/lift pivot OR meta-data, we BREAK the lock.
@@ -110,6 +118,8 @@ async def controller_node(state: GraphState):
         final_entities = entities.copy()
         if extracted_budget:
             final_entities["budget_max"] = extracted_budget
+            
+        current_stage = AgentSession.Stage.CLOSING
 
         return {
             "intent": Intent.PURCHASE_INTENT if not has_hesitation else Intent.HESITANT,
@@ -119,8 +129,9 @@ async def controller_node(state: GraphState):
             "extracted_entities": final_entities,
             "customer_email": extracted_email if extracted_email else state.get("customer_email"),
             "customer_name": extracted_name if extracted_name else state.get("customer_name"),
-            "advisor_step": current_step,
+            "sales_stage": current_stage,
             "advisor_history": adv_history,
+            "vehicle_context": vehicle_context,
             "muzzle_response": False,
             "is_greeting": False
         }
@@ -137,8 +148,9 @@ async def controller_node(state: GraphState):
                 "intent": final_intent,
                 "domain": "wheels",
                 "extracted_entities": entities, # PRESERVE ENTITIES for relaxation
-                "advisor_step": current_step,
+                "sales_stage": current_stage,
                 "advisor_history": adv_history,
+                "vehicle_context": vehicle_context,
                 "muzzle_response": False,
                 "is_greeting": False
             }
@@ -158,6 +170,7 @@ async def controller_node(state: GraphState):
             "intent": Intent.NEEDS_CLARITY,
             "domain": "wheels",
             "extracted_entities": {},
+            "vehicle_context": vehicle_context,
             "muzzle_response": False,
             "is_greeting": True
         }
@@ -203,6 +216,17 @@ async def controller_node(state: GraphState):
             "style": attrs.get("style")
         }
         entities = {k: v for k, v in entities.items() if v}
+        
+        # LLM Vehicle Extraction Fallback (If Fuzzy Matcher missed it)
+        if not vehicle_context.get("make") and attrs.get("vehicle_make"):
+            vehicle_context["make"] = str(attrs.get("vehicle_make")).title()
+        if not vehicle_context.get("model") and attrs.get("vehicle_model"):
+            vehicle_context["model"] = str(attrs.get("vehicle_model")).title()
+        if not vehicle_context.get("year") and attrs.get("vehicle_year"):
+            try:
+                vehicle_context["year"] = int(attrs.get("vehicle_year"))
+            except ValueError:
+                pass
 
         logger.info(f"AI Classification SUCCESS: Intent={result.get('intent')} | Domain={result.get('domain')}")
         
@@ -224,8 +248,9 @@ async def controller_node(state: GraphState):
             "domain": final_domain,
             "extracted_entities": merged_entities,
             "detected_violation_category": detected_pivot,
-            "advisor_step": current_step,
+            "sales_stage": current_stage,
             "advisor_history": adv_history,
+            "vehicle_context": vehicle_context,
             "muzzle_response": True if result.get("domain") == "out_of_scope" and not detected_pivot else False,
             "is_greeting": False
         }

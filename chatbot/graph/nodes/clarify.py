@@ -1,7 +1,6 @@
 import logging
 from chatbot.graph.state import GraphState
 from chatbot.helpers.prompts import DISCOVERY_PROMPT, STATIC_MESSAGES
-from chatbot.services.product_service import ProductService
 
 # 🔥 MASTER LOGGER FOR TRACEABILITY
 logger = logging.getLogger("chatbot.nodes.clarify")
@@ -9,47 +8,43 @@ logger = logging.getLogger("chatbot.nodes.clarify")
 async def clarify_node(state: GraphState):
     """
     Expert Discovery Node.
-    Hardened for 'Value-First' Retrieval: Shows products even during discovery.
+    Hardened for pure Stage-Driven Extraction (No eager product dumping).
     """
     is_greeting = state.get("is_greeting", False)
     entities = state.get("extracted_entities", {})
-    query_text = state.get("last_user_query", "")
+    vehicle_context = state.get("vehicle_context", {})
     
-    logger.info(f"Clarify: Initiating Value-First Discovery (Greeting={is_greeting})...")
-
-    # 1. FETCH BROAD FEATURED PRODUCTS (Instant Gratification)
-    # We run a broad universal search using whatever context we have (e.g. SUV, Truck)
-    # This ensures the user sees wheels immediately.
-    logger.info(f"Clarify: Fetching category-featured items for immediate value...")
-    broad_results = await ProductService.universal_search(
-        query_text=query_text if not is_greeting else "featured wheels",
-        entities=entities,
-        limit=3
-    )
+    logger.info(f"Clarify: Initiating Pure Discovery (Greeting={is_greeting})...")
     
-    # 2. FETCH CATALOG OVERVIEW (Brands)
-    catalog = await ProductService.get_catalog_overview()
-    available_brands = catalog.get("brands", [])[:8]
-    
-    # 3. CONSTRUCT PAYLOAD
+    # 1. CONSTRUCT PAYLOAD FOR GREETINGS
     if is_greeting:
         logger.info("Clarify: Setting action to 'greeting' for natural persona response.")
         return {
             "raw_response_data": {
                 "action": "greeting",
-                "brands": available_brands,
-                "products": broad_results,
                 "message": STATIC_MESSAGES["greeting"]
             }
         }
 
-    # NORMAL DISCOVERY TRACK with 'Value-First' products
-    logger.info(f"Clarify: Setting action to 'discovery' with {len(broad_results)} featured products.")
+    # 2. STRICT FALLBACK & EXTRACTION
+    has_vehicle = bool(vehicle_context.get("make") and vehicle_context.get("model")) or bool(vehicle_context.get("vehicle_type")) or bool(entities.get("vehicle_type"))
+    has_budget = bool(entities.get("budget_max"))
+    has_style = bool(entities.get("style")) or bool(entities.get("usage"))
+    
+    missing_fields = []
+    if not has_vehicle:
+        missing_fields.append("vehicle")
+    elif not has_budget:
+        missing_fields.append("budget")
+    elif not has_style:
+        missing_fields.append("style")
+        
+    logger.info(f"Clarify: Setting action to 'discovery'. Missing sequential fields: {missing_fields}")
+    
     return {
         "raw_response_data": {
             "action": "discovery",
-            "brands": available_brands,
-            "products": broad_results,
-            "instruction": DISCOVERY_PROMPT
+            "instruction": DISCOVERY_PROMPT,
+            "missing_fields": missing_fields
         }
     }

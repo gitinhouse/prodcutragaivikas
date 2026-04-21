@@ -21,16 +21,10 @@ async def synthesizer_node(state: GraphState):
 
     # 1. Authority Refusal Path
     if muzzle or domain == "out_of_scope":
-        refusal_content = (
-            "I specialize exclusively in premium automotive wheels and rims. "
-            "I'm afraid I cannot assist with that request, but I would be happy "
-            "to help you find the perfect set of wheels for your vehicle—what are you driving?"
-        )
-        logger.warning("Synthesizer Refusal Path Triggered: Input out of domain.")
-        return {
-            "messages": [AIMessage(content=refusal_content)],
-            "last_action": "refusal"
-        }
+        logger.info("Synthesizer Refusal Path Triggered: Delegating to LLM for empathetic dynamic refusal.")
+        action_type = "refusal"
+        raw_data["allow_lead_capture"] = False
+        raw_data["action"] = "refusal"
 
     # 2. Vocal Synthesis Path
     raw_data = state.get("raw_response_data", {})
@@ -62,6 +56,10 @@ async def synthesizer_node(state: GraphState):
     is_greeting = state.get("is_greeting", False)
     last_user_msg = state.get("messages", [])[-1].content.lower() if state.get("messages") else ""
     is_objection = any(k in last_user_msg for k in ["not those", "wrong", "different", "more", "other"])
+
+    if action_type == "refusal":
+        logger.info("Setting 'Dynamic Refusal' persona.")
+        vocal_contract = "ROLE: Premium Authority. STRICT TASK: Refuse the user's out-of-scope request empathetically. Acknowledge exactly what crazy item they asked for (e.g., 'tractor wheels', 'pizza', 'finance advice') and politely explain that we strongly specialize ONLY in premium automotive setups (trucks, SUVs, sports cars). Ask them what kind of automotive build they are working on today to gracefully pivot them back on track."
 
     # MASTER BYPASS SWITCH: Force static greeting if query is a pure greeting word (Reliability 100)
     clean_last_msg = re.sub(r'[^a-zA-Z]', '', last_user_msg).strip()
@@ -116,9 +114,9 @@ async def synthesizer_node(state: GraphState):
 
         if customer_email:
             name_vocal = f" {customer_name}," if customer_name else ""
-            vocal_contract = f"ROLE: Master Sales Closer. TASK: Rule 3 Compliance: Enthusiastically confirm details for {customer_email}.{name_vocal} Explain you are generating the quote for the {product_name or 'wheels'} now. Status: Final Step."
+            vocal_contract = f"ROLE: Master Sales Closer. TASK: Rule 3 Compliance: Enthusiastically confirm details for {customer_email}.{name_vocal} Explain you are generating the quote for the {product_name or 'wheels'} now. Status: Final Step. DO NOT ask any questions."
         else:
-            vocal_contract = f"ROLE: Master Sales Closer. TASK: Rule 3 Compliance: Enthusiastically confirm we can get those {product_name or 'wheels'} ordered. ASK for customer's Name and Email for the quote. Focus 100% on lead capture for this specific set."
+            vocal_contract = f"ROLE: Master Sales Closer. TASK: Enthusiastically confirm we can get those {product_name or 'wheels'} ordered! IMPORTANT: DO NOT ask questions about wheel size, bolt pattern, or vehicle fitment under ANY circumstances. We handle fitment internally. Focus 100% on asking for the customer's email to send the exact quote."
             
     elif has_meta_request:
         logger.info("Synthesizer [META-DATA]: Confirming Expert Knowledge.")
@@ -131,12 +129,15 @@ async def synthesizer_node(state: GraphState):
     elif pivot_category:
         logger.info(f"Synthesizer [SOFT PIVOT]: Activating Pivot for {pivot_category}.")
         vocal_contract = f"ROLE: Premium Design Advisor. TASK: DO NOT DENY availability for {pivot_category}. Acknowledge their interest in the {pivot_category} first. THEN state that while we currently specialize in locating the perfect premium wheels for the build, you can certainly help them find the exact offsets and wide-stance fitment to ensure those {pivot_category} fit perfectly once the rims are selected. ASK what they are driving to start the wheel check."
+    
     elif was_leaded and ("thank" in last_user_msg.lower() or is_affirming):
         logger.info("Synthesizer [LEAD LOCK]: Providing Concierge Closure.")
         vocal_contract = "ROLE: Senior Concierge Advisor. VOICE: Professional, warm, expert. TASK: Provide a polite, final professional closing. Acknowledge their thanks. Confirm you are busy finalizing the technical quote for their specific build and will email it shortly. Do NOT offer more wheels or ask more questions. Just offer a helpful 'I'm on it!' closure."
+    
     elif has_hesitation:
         logger.info("Synthesizer [EMPATHY MODE]: Activating Rule 4 (Objections) Persona.")
         vocal_contract = "ROLE: Empathetic Advisor. TASK: Rule 4 Compliance: Acknowledge budget concern. Provide a side-by-side comparison (Pros/Cons) of the current selection vs. a value alternative. Offer empathy, no pressure."
+    
     else:
         # Standard step-by-step guidance injection
         vocal_contract += f"\nRule 5 guidance: Current Build Stage: {advisor_step}. Help the user feel confident moving to the next step."
@@ -159,7 +160,7 @@ async def synthesizer_node(state: GraphState):
     if state.get("customer_email"):
         lead_status["has_email"] = True
     
-    if raw_data.get("allow_lead_capture") and action_type != "info":
+    if raw_data.get("allow_lead_capture"):
         lead_status["attempts"] += 1
         lead_status["last_asked_turn"] = state.get("iteration_count", 0)
         logger.info("Sales Logic Update: Incrementing lead capture attempts.")

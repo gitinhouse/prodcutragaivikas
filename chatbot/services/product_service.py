@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any, Union
 from django.db.models import Q, Case, When, Value, FloatField
 from asgiref.sync import sync_to_async
 from pgvector.django import CosineDistance
-from chatbot.models import Product, Brand, Category
+from chatbot.models import Product, Brand, Category, Fitment
 from .cache_service import CacheService
 
 # 🔥 MASTER LOGGER FOR TRACEABILITY
@@ -207,3 +207,22 @@ class ProductService:
             brands = list(Brand.objects.values_list('name', flat=True).order_by('name'))
             return {"brands": brands, "count": len(brands)}
         return await sync_to_async(_get_brands, thread_sensitive=False)()
+
+    @staticmethod
+    async def get_wheels_by_fitment(make: str, model: str, year: int, limit: int = 4) -> List[Dict[str, Any]]:
+        """
+        Retrieves products via strict relational Fitment table mapping.
+        """
+        def _execute():
+            fitments = Fitment.objects.select_related('product', 'product__brand').filter(
+                make__iexact=make,
+                model__iexact=model,
+                year_from__lte=year,
+                year_to__gte=year
+            )
+            product_ids = fitments.values_list('product_id', flat=True).distinct()[:limit]
+            products = Product.objects.select_related('brand').filter(id__in=product_ids)
+            return list(products)
+            
+        raw_results = await sync_to_async(_execute, thread_sensitive=False)()
+        return [ProductService._serialize_product(p) for p in raw_results]

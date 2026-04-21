@@ -59,4 +59,10 @@ async def validator_node(state: GraphState):
         logger.warning("Validator: Strict Match Failed. Triggering Nuclear Refusal.")
         return {**state_update, "muzzle_response": True, "iron_domain_violation": True}
 
-    return {**state_update, "iron_domain_violation": False, "muzzle_response": False}
+    # 4. MIXED INTENT TRACKING (New Hardened Feature)
+    mixed_intent = False
+    if prev_domain == "wheels" and any(k in user_query.split() for k in ["but", "instead", "actually", "nevermind", "wait"]):
+        logger.info("Validator: Mixed Intent / Pivot Detected.")
+        mixed_intent = True
+
+    return {**state_update, "iron_domain_violation": False, "muzzle_response": False, "mixed_intent_flag": mixed_intent}

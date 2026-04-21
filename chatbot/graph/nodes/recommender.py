@@ -9,43 +9,50 @@ logger = logging.getLogger("chatbot.nodes.recommender")
 async def recommender_node(state: GraphState):
     """
     Expert Recommendation Node.
-    Hardened for Technical Fitment, Usage Retrieval, and Variety Shuffle.
+    Hardened for strict Fitment table relational matching and hard gating.
     """
     entities = state.get("extracted_entities", {})
+    vehicle_context = state.get("vehicle_context", {})
     query_text = state.get("last_user_query", "")
-    prev_metadata = state.get("recommended_products_metadata", [])
     
-    # VARIETY SHUFFLE: Collect previously shown IDs to avoid 'Same Answer' loops
-    exclude_ids = [str(p.get("id")) for p in prev_metadata if p.get("id")] if prev_metadata else []
+    # 1. HARD GUARD: Reject eager dumps if required context is missing.
+    make = vehicle_context.get("make")
+    model = vehicle_context.get("model")
+    year = vehicle_context.get("year")
+    budget = entities.get("budget_max")
+    style = entities.get("style") or entities.get("usage")
     
-    # 1. EXTRACT FILTERS
-    diameter = entities.get("size")
-    max_price = entities.get("budget_max")
-    brand = entities.get("brand")
-    bolt_pattern = entities.get("bolt_pattern")
-    vehicle_type = entities.get("vehicle_type")
-    usage = entities.get("usage") or entities.get("style", "")
+    if not all([make, model, year, budget, style]):
+        logger.warning(f"Recommender: Missing strict context (Make:{make}, Budget:{budget}, Style:{style}). Bouncing.")
+        return {
+            "raw_response_data": {
+                "action": "reply",
+                "instruction": "The system bounced the recommendation because the vehicle details (year/make/model), budget, or style preference was missing. Ask the user politely to narrow down whatever is missing so you can look up exact fitments.",
+                "allow_lead_capture": False
+            }
+        }
     
-    # Check if this turn is a style refinement (e.g. 'off-road', 'rugged')
-    is_refinement = any(k in query_text.lower() for k in ["off-road", "rugged", "trail", "different", "other", "more"])
-    
-    # 2. CALL UNIVERSAL SEARCH ENGINE
-    logger.info(f"Recommender: Universal Search (v_type={vehicle_type}, usage={usage}, shuffle={is_refinement})")
-    
-    # If it's a refinement, we use the shuffle; otherwise, we allow the best matches (even if repeat)
-    results = await ProductService.universal_search(
-        query_text=query_text,
-        entities={
-            "size": diameter,
-            "bolt_pattern": bolt_pattern,
-            "brand": brand,
-            "vehicle_type": vehicle_type,
-            "usage": usage,
-            "budget_max": max_price
-        },
-        exclude_ids=exclude_ids if is_refinement else None,
+    # 2. STRICT RELATIONAL MATCHING
+    logger.info(f"Recommender: Requesting explicit fitment for {year} {make} {model}")
+    results = await ProductService.get_wheels_by_fitment(
+        make=make,
+        model=model,
+        year=int(year),
         limit=4
     )
+    
+    # Optional Semantic Fallback if no strict fitments found
+    if not results:
+        logger.info("Recommender: Strict fitment yielded 0 results. Firing universal search fallback.")
+        results = await ProductService.universal_search(
+            query_text=query_text,
+            entities={
+                "vehicle_type": vehicle_context.get("type"),
+                "usage": style,
+                "budget_max": budget,
+            },
+            limit=4
+        )
     
     logger.info(f"Recommender: Search returned {len(results)} matches.")
     
@@ -63,3 +70,4 @@ async def recommender_node(state: GraphState):
         "recommended_products": recommended_names,
         "recommended_products_metadata": recommended_metadata
     }
+

@@ -22,16 +22,36 @@ class LeadStatus(TypedDict):
     has_email: bool
     last_asked_turn: int
 
+class VehicleContext(TypedDict, total=False):
+    year: Optional[Union[int, str]]
+    make: Optional[str]
+    model: Optional[str]
+    vehicle_type: Optional[str]
+
+class SalesContext(TypedDict, total=False):
+    budget_max: Optional[float]
+    size: Optional[str]
+    bolt_pattern: Optional[str]
+    style: Optional[str]
+    brand: Optional[str]
+
 class GraphState(MessagesState):
     """
     Master Production State for Sebastian (Production 7 Hardened).
     """
+    session_id: str # Ties explicitly to AgentSession model
+    sales_stage: str # Matches AgentSession.Stage
+    
+    # Context Data
+    vehicle_context: VehicleContext # Ties to AgentSession.vehicle_data
+    sales_context: SalesContext # Consolidates identified_budget, identified_style
+    identified_budget: Optional[float] # Legacy tie to AgentSession.identified_budget
+    identified_style: dict # Legacy tie to AgentSession.identified_style
+
     # 1. Classification & Intelligence
     intent: Union[Intent, str]
     intent_confidence: Optional[float]
     sentiment: Optional[str]
-    user_stage: str # "browsing" | "evaluating" | "ready-to-buy"
-    advisor_step: str # "discovery_usage" | "discovery_vibe" | "technical_specs" | "lead_capture"
     advisor_history: List[str] # Chain of steps completed
     
     # 2. Domain & Integrity Guards (NEW)

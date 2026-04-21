@@ -12,11 +12,20 @@ async def lead_evaluator_node(state: GraphState):
     """
     intent = state.get("intent")
     user_query = state.get("last_user_query", "").lower()
-    user_stage = state.get("user_stage", "browsing")
+    user_stage = state.get("sales_stage", "discovery") # Swapped user_stage for sales_stage
     lead_status = state.get("lead_status", {"attempts": 0, "has_email": False})
     
+    # --- POST-CLOSING BEHAVIOR ---
+    if user_stage == "post_closing":
+        logger.info("Lead Evaluator: Session is in POST-CLOSING stage. Stopping proactive recommendations.")
+        raw_data = state.get("raw_response_data", {})
+        raw_data["allow_lead_capture"] = False
+        raw_data["action"] = "post_closing"
+        raw_data["instruction"] = "The sale is closed. Focus ONLY on post-purchase support (order tracking, warranty, session reset). Do not recommend new products."
+        return {"raw_response_data": raw_data}
+
     hesitation_signals = ["budget", "price", "too much", "expensive", "costly", "afford", "cheaper"]
-    has_hesitation = any(k in user_query for k in hesitation_signals) or intent == "hesitant"
+    has_hesitation = any(k in user_query for k in hesitation_signals) or str(intent).lower() == "hesitant"
     
     llm = get_llm()
     
