@@ -9,8 +9,10 @@ from chatbot.graph.nodes.recommender import recommender_node
 from chatbot.graph.nodes.info_node import info_node
 from chatbot.graph.nodes.lead_evaluator import lead_evaluator_node
 from chatbot.graph.nodes.synthesizer import synthesizer_node
+from chatbot.graph.nodes.safety_guard import safety_guard_node
 
 from chatbot.graph.edges import route_to_action
+
 
 def create_sales_graph(checkpointer=None):
     """
@@ -33,6 +35,7 @@ def create_sales_graph(checkpointer=None):
     # 4. Evaluation & Synthesis Level
     workflow.add_node("Lead_evaluator", lead_evaluator_node)
     workflow.add_node("Synthesizer", synthesizer_node)
+    workflow.add_node("SafetyGuard", safety_guard_node)
     
     # --- TOPOLOGY ---
     
@@ -61,6 +64,7 @@ def create_sales_graph(checkpointer=None):
         
     # Generation & Persistence
     workflow.add_edge("Lead_evaluator", "Synthesizer")
-    workflow.add_edge("Synthesizer", END)
+    workflow.add_edge("Synthesizer", "SafetyGuard")
+    workflow.add_edge("SafetyGuard", END)
 
     return workflow.compile(checkpointer=checkpointer)

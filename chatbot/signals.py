@@ -15,7 +15,7 @@ def trigger_product_embedding(sender, instance, created, **kwargs):
     from chatbot.services.embedding_service import EmbeddingService
     
     # Check if we need to update
-    if created or not instance.embedding:
+    if created or instance.embedding is None:
         logger.info(f"Triggering background embedding for: {instance.name}")
         # Run in a separate thread for simplicity in this stage
         Thread(target=EmbeddingService.update_product_embedding, args=(instance,)).start()

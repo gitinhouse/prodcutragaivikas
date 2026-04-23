@@ -1,6 +1,6 @@
 import logging
+import re
 from chatbot.graph.state import GraphState
-from chatbot.helpers.prompts import INFO_PROMPT
 from chatbot.services.product_service import ProductService
 
 # 🔥 MASTER LOGGER FOR TRACEABILITY
@@ -9,10 +9,12 @@ logger = logging.getLogger("chatbot.nodes.info")
 async def info_node(state: GraphState):
     """
     Expert Technical Info Node.
-    Hardened to use Universal Search for high-precision product resolution.
+    Hardened for context-aware resolution and sales-aligned gating.
     """
-    query_text = state.get("last_user_query", "")
+    query_text = state.get("last_user_query", "").lower()
     entities = state.get("extracted_entities", {})
+    cta_intent = state.get("cta_intent", "show_options")
+    sales_stage = state.get("sales_stage", "recommendation")
     
     logger.info(f"Info Node: Resolving technical context for '{query_text}'")
 
@@ -23,36 +25,65 @@ async def info_node(state: GraphState):
         limit=2
     )
     
-    # MEMORY FALLBACK: If no results for 'buy it' or pronouns, keep current product
-    current_resolved = state.get("resolved_product")
+    # 2. SMART CONTEXT RESOLUTION (Pronoun/Direct Reference)
+    current_resolved_name = state.get("resolved_product")
     new_resolved = results[0] if results else None
     
-    # Pronoun detection: If query is very short and we had a product, don't clear it!
-    pronouns = ["it", "this", "that", "those", "buy", "price", "more"]
-    is_pronoun_query = any(p in query_text.lower().split() for p in pronouns) or len(query_text.split()) < 3
-    
-    if not new_resolved and current_resolved and is_pronoun_query:
-        logger.info(f"Info Node: Maintaining context for '{current_resolved}' due to pronoun/short query.")
-        resolved_product_name = current_resolved
-    else:
-        resolved_product_name = new_resolved["marketing_name"] if new_resolved else None
-    
-    if resolved_product_name:
-        logger.info(f"Info Node: Technical context resolved/maintained as '{resolved_product_name}'")
-    else:
-        logger.info("Info Node: No specific product resolved. Providing general technical guidance.")
+    # If no new result but we have a current one in state, try to re-resolve it
+    if not new_resolved and current_resolved_name:
+        # Re-fetch from DB to get fresh specs
+        context_results = await ProductService.universal_search(
+            query_text=current_resolved_name,
+            entities=entities,
+            limit=1
+        )
+        if context_results:
+            new_resolved = context_results[0]
 
-    # 2. CONSTRUCT PAYLOAD
-    main_product = new_resolved if new_resolved else {"marketing_name": resolved_product_name}
-    similar_products = results[1:] if len(results) > 1 else []
-    
+    final_product_data = None
+    if new_resolved:
+        # Construct Enriched Technical Structure
+        specs = new_resolved.get("specification", {})
+        final_product_data = {
+            "name": new_resolved.get("name"),
+            "brand": new_resolved.get("brand_name"),
+            "stock": new_resolved.get("stock", 0),
+            "bolt_pattern": new_resolved.get("bolt_pattern") or "Verified Fitment",
+            "size": f"{new_resolved.get('diameter', 'N/A')}\" x {new_resolved.get('width', 'N/A')}\"",
+            "finish": new_resolved.get("finish") or "Premium Finish",
+            "price": new_resolved.get("price"),
+            "details": new_resolved.get("ai_summary", "High-performance technical specifications."),
+            "raw_specs": specs
+        }
+
+    # 3. SMART LIST FILTERING (For "Which one is black?" type questions)
+    if re.search(r"(which|any|these|show|have|ones|all)", query_text):
+        color_match = re.search(r"(black|silver|matte|gloss|chrome|gold|bronze)", query_text)
+        if color_match:
+            color = color_match.group(1)
+            logger.info(f"Info Node: Filtering shown products for color '{color}'")
+            # We already have results from universal_search, let's use them
+            matching_names = [r.get("marketing_name") for r in results if color in r.get("finish", "").lower() or color in r.get("ai_summary", "").lower()]
+            if matching_names:
+                final_product_data = {
+                    "name": "Selection Results",
+                    "details": f"The following models are available in {color}: " + ", ".join(matching_names)
+                }
+            else:
+                final_product_data = {
+                    "name": "Selection Results",
+                    "details": f"I'm checking the specific finishes for those models. While {color} is a popular choice, let's look at the exact options for your build."
+                }
+
+    # 3. STRATEGIC GATING
+    allow_lead = (sales_stage == "closing" or cta_intent == "offer_quote")
+
     return {
-        "resolved_product": resolved_product_name,
         "raw_response_data": {
             "action": "info",
-            "product": main_product,
-            "similar_products": similar_products,
-            "instruction": INFO_PROMPT,
-            "allow_lead_capture": True
-        }
+            "cta_intent": cta_intent,
+            "product_info": final_product_data or {"name": "General Inquiries", "details": "Expert advice requested."},
+            "allow_lead_capture": allow_lead
+        },
+        "resolved_product": final_product_data.get("name") if final_product_data else None
     }

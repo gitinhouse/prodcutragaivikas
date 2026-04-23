@@ -1,74 +1,89 @@
 import logging
-from chatbot.graph.state import GraphState
-from chatbot.helpers.prompts import LEAD_EVALUATOR_PROMPT
-from config.llm_config import get_llm
+from chatbot.graph.state import GraphState, Intent
 
 # 🔥 MASTER LOGGER FOR TRACEABILITY
 logger = logging.getLogger("chatbot.nodes.lead_evaluator")
 
 async def lead_evaluator_node(state: GraphState):
     """
-    Expert Lead Evaluation Node.
+    STRATEGY ENGINE: The Master Strategist.
+    Decides the technical 'cta_intent' based on Sales Stage, Intent, and Engagement.
     """
     intent = state.get("intent")
+    intent_str = str(intent.value if hasattr(intent, "value") else intent).lower()
     user_query = state.get("last_user_query", "").lower()
-    user_stage = state.get("sales_stage", "discovery") # Swapped user_stage for sales_stage
-    lead_status = state.get("lead_status", {"attempts": 0, "has_email": False})
-    
-    # --- POST-CLOSING BEHAVIOR ---
-    if user_stage == "post_closing":
-        logger.info("Lead Evaluator: Session is in POST-CLOSING stage. Stopping proactive recommendations.")
-        raw_data = state.get("raw_response_data", {})
-        raw_data["allow_lead_capture"] = False
-        raw_data["action"] = "post_closing"
-        raw_data["instruction"] = "The sale is closed. Focus ONLY on post-purchase support (order tracking, warranty, session reset). Do not recommend new products."
-        return {"raw_response_data": raw_data}
-
-    hesitation_signals = ["budget", "price", "too much", "expensive", "costly", "afford", "cheaper"]
-    has_hesitation = any(k in user_query for k in hesitation_signals) or str(intent).lower() == "hesitant"
-    
-    llm = get_llm()
-    
-    # 0. THE CORE SALES SAFETY-NET (Prevent False Refusals & Memory Awareness)
-    # If the user is talking about 'brands', 'help', 'recommendations', or says 'yes/please', it's ALWAYS wheels.
-    sales_affirmations = ["yes", "please", "recommendation", "show", "give", "tell", "more", "look"]
-    purchase_signals = ["buy", "purchase", "order", "checkout", "quote", "price on", "how much for"]
-    catalog_keywords = ["brand", "catalog", "help", "list", "manufactur", "wheel", "rim"]
-    
-    is_affirming = any(k in user_query.lower() for k in sales_affirmations)
-    is_buying = any(k in user_query.lower() for k in purchase_signals)
-    has_catalog_keyword = any(k in user_query.lower() for k in catalog_keywords)
-
-    # PURCHASE LOCK: If they want to buy, don't let the AI guess the intent
-    from chatbot.graph.state import Intent
-    # 1. SOFT GUARD: If we already have Name AND Email, deny capture to prevent repeats
-    has_email = state.get("customer_email") or lead_status.get("has_email")
-    has_name = state.get("customer_name")
-    
-    if has_email and has_name:
-        logger.info("Lead Evaluator: Name and Email already present. Disabling further capture attempts.")
-        allow_lead = False
-    elif has_hesitation:
-        logger.warning(f"Lead Evaluator: Hesitation detected for '{user_query}'. Forcing lead capture DENIAL.")
-        allow_lead = False
-    elif is_buying:
-        logger.info(f"Lead Evaluator [SALES LOCK]: High Purchase Intent detected for '{user_query}'.")
-        allow_lead = True
-    else:
-        try:
-            result = await llm.ainvoke([
-                {"role": "system", "content": LEAD_EVALUATOR_PROMPT},
-                {"role": "user", "content": f"Intent: {intent}, Stage: {user_stage}, Status: {lead_status}"}
-            ])
-            allow_lead = result.get("allow_lead_capture", False)
-            logger.info(f"Lead Decision: ALLOWED={allow_lead} | Reason: {result.get('reason')}")
-        except Exception:
-            logger.error("Lead Evaluator FAILED. Defaulting to deny.")
-            allow_lead = False
-
+    user_stage = state.get("sales_stage", "discovery")
+    domain = state.get("domain", "in_scope")
     raw_data = state.get("raw_response_data", {})
-    raw_data["allow_lead_capture"] = allow_lead
+    action_type = raw_data.get("action", "discovery")
     
+    vehicle_context = state.get("vehicle_context", {})
+    entities = state.get("extracted_entities", {})
+    has_email = bool(state.get("customer_email") or state.get("has_email", False))
+    history = state.get("advisor_history", [])
+
+    logger.info(f"Lead Evaluator: Analyzing Strategy (Stage={user_stage}, Intent={intent_str})")
+
+    # --- 1. SIGNAL DETECTION ---
+    is_engaged = any(k in user_query for k in ["show", "options", "what do you have", "recommend", "looking", "rims", "wheels", "list"])
+    has_price_intent = any(k in user_query for k in ["price", "cost", "how much", "total", "quote", "pricing"])
+    has_hesitation = intent_str == "hesitant" or any(k in user_query for k in ["expensive", "too much", "high", "cheaper"])
+    is_buying = intent_str == "purchase_intent" or any(k in user_query for k in ["buy", "order", "take it", "checkout"])
+
+    # --- 2. THE STRATEGY MATRIX ---
+    # --- RULE: RESPECT CONTROLLER'S DECISION (UNLESS ACTION FAILED) ---
+    # If the Controller set show_options but Recommender found nothing, we MUST pivot.
+    controller_intent = state.get("cta_intent", "")
+    PASS_THROUGH_INTENTS = ["show_options", "ask_lead_info", "redirect_to_domain", "clarify", "recovery", "final_thank_you"]
+    
+    if controller_intent in PASS_THROUGH_INTENTS and action_type != "no_fitment_found":
+        logger.info(f"Lead Evaluator: Passing through Controller strategy '{controller_intent}'.")
+        raw_data["allow_lead_capture"] = (controller_intent == "ask_lead_info")
+        raw_data["cta_intent"] = controller_intent
+        return {"cta_intent": controller_intent, "raw_response_data": raw_data}
+
+    cta_intent = "ask_vehicle"  # Default fallback only if controller gave nothing useful
+
+    # A. DOMAIN PROTECTION
+    if domain == "hard_out":
+        cta_intent = "redirect_to_domain"
+
+    # B. NO FITMENT FOUND
+    elif action_type == "no_fitment_found":
+        cta_intent = "technical_pivot"
+
+    # C. PURE DISCOVERY (no vehicle at all)
+    elif user_stage == "discovery":
+        if not (vehicle_context.get("make") and vehicle_context.get("model")):
+            cta_intent = "ask_vehicle"
+        else:
+            cta_intent = "show_options"
+
+    # D. GUIDED DISCOVERY (vehicle known, show products)
+    elif user_stage in ["guided_discovery", "recommend", "partial_recommend", "recommendation", "fitment"]:
+        if has_price_intent:
+            cta_intent = "offer_quote"
+        elif has_hesitation:
+            cta_intent = "handle_objection"
+        else:
+            cta_intent = "show_options"
+
+    # E. CLOSING
+    elif user_stage == "closing" or is_buying:
+        if has_email:
+            cta_intent = "close"
+        else:
+            cta_intent = "ask_lead_info"
+
+    # --- LEAD CAPTURE PERMISSION ---
+    allow_lead = cta_intent in ["offer_quote", "soft_close", "close", "ask_lead_info"]
+
+    logger.info(f"Lead Evaluator FINAL Strategy: '{cta_intent}' (AllowLead={allow_lead})")
+
+    raw_data["allow_lead_capture"] = allow_lead
+    raw_data["cta_intent"] = cta_intent
+
     return {
+        "cta_intent": cta_intent,
         "raw_response_data": raw_data
     }

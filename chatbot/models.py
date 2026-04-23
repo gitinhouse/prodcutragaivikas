@@ -83,7 +83,8 @@ class Product(models.Model):
 
     def save(self, *args, **kwargs):
         # Auto-populate searchable_text as a safety fallback
-        self.searchable_text = f"{self.name} {self.brand.name} {self.category.name} {self.ai_summary}"
+        # Enriched with finish and bolt_pattern for better keyword matching
+        self.searchable_text = f"{self.name} {self.brand.name} {self.category.name} {self.finish or ''} {self.bolt_pattern or ''} {self.ai_summary}"
         super().save(*args, **kwargs)
 
     def __str__(self):

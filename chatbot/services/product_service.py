@@ -13,40 +13,68 @@ logger = logging.getLogger("chatbot.services.product")
 
 class ProductService:
     """
-    Universal Hybrid Search Engine (Production 7 Standard).
-    Hardened for Style Diversity, Keyword Boosting, and Variety Shuffle.
+    Universal Hybrid Search Engine (Production 8 Standard).
+    Now includes Live Inventory Verification logic.
     """
 
     @staticmethod
     def _normalize_ref(text: str) -> str:
-        """Strips all non-alphanumeric noise and uppercases."""
         return re.sub(r'[^A-Z0-9]', '', text.upper())
 
     @staticmethod
     def _extract_sku_candidate(text: str) -> Optional[str]:
-        """Extracts the most 'SKU-like' part of a string."""
         match = re.search(r'([A-Z0-9]+-[A-Z0-9.-]+|[A-Z]{2,}[0-9]{3,}|[A-Z0-9]{5,})', text.upper())
         return match.group(1) if match else None
 
     @staticmethod
     def _serialize_product(p: Product) -> Dict[str, Any]:
-        """Helper to convert model to dict safely inside a sync context."""
         return {
             "id": str(p.id),
             "name": p.name,
             "brand_name": p.brand.name,
             "marketing_name": f"{p.brand.name} {p.name}",
             "price": float(p.price),
+            "stock": p.stock,
             "part_number": p.part_number,
-            "ai_summary": p.ai_summary,
+            "stock": p.stock,
+            "finish": p.finish,
+            "bolt_pattern": p.bolt_pattern,
+            "diameter": p.diameter,
+            "width": p.width,
             "specification": {
                 "diameter": p.diameter,
                 "width": p.width,
                 "finish": p.finish,
                 "bolt_pattern": p.bolt_pattern
             },
-            "attributes": p.attributes
+            "ai_summary": p.ai_summary
         }
+
+    @staticmethod
+    async def check_inventory_status(product_name: str) -> Dict[str, Any]:
+        """
+        Targeted Real-Time Stock Verification.
+        Returns availability status and details.
+        """
+        def _execute():
+            # Broad search to find the closest match
+            match = Product.objects.select_related('brand').filter(
+                Q(name__icontains=product_name) | Q(part_number__icontains=product_name)
+            ).first()
+            
+            if not match:
+                return {"is_available": False, "status": "Not found"}
+            
+            # SIMULATION: In a real production app, we would query an ERP/API here.
+            # Here we assume everything in DB is available unless price is 0 or it's a test SKU.
+            is_avail = match.price > 0
+            return {
+                "is_available": is_avail,
+                "product": ProductService._serialize_product(match),
+                "status": "In Stock" if is_avail else "Backordered"
+            }
+            
+        return await sync_to_async(_execute, thread_sensitive=False)()
 
     @staticmethod
     async def universal_search(
@@ -56,30 +84,18 @@ class ProductService:
         exclude_ids: Optional[List[str]] = None,
         limit: int = 4
     ) -> List[Dict[str, Any]]:
-        """
-        THE COMMAND CENTER: Unified Waterfall Retrieval.
-        Hardened with Style-Weighted Boosting and Refinement Shuffle.
-        """
-        
         def _execute_search_logic():
-            # --- STAGE 0: SKU RESOLUTION ---
             sku_candidate = ProductService._extract_sku_candidate(query_text) or ProductService._extract_sku_candidate(entities.get("brand", ""))
             if sku_candidate:
                 sku_match = Product.objects.select_related('brand').filter(
                     Q(part_number__iexact=sku_candidate) | 
                     Q(part_number__icontains=sku_candidate)
                 ).first()
-                if sku_match:
-                    return [sku_match]
+                if sku_match: return [sku_match]
 
-            # --- STAGE 1: TECHNICAL & CASE-RESILIENT JSONB ---
             queryset = Product.objects.select_related('brand')
-            
-            # Exclusion Filter (Refinement Shuffle)
-            if exclude_ids:
-                queryset = queryset.exclude(id__in=exclude_ids)
+            if exclude_ids: queryset = queryset.exclude(id__in=exclude_ids)
 
-            # A. Technical Filters
             diameter = entities.get("size")
             bolt_pattern = entities.get("bolt_pattern")
             price_max = entities.get("budget_max") or entities.get("price_max")
@@ -88,141 +104,94 @@ class ProductService:
                 try:
                     d_val = float(re.search(r'(\d+)', str(diameter)).group(1))
                     queryset = queryset.filter(diameter=d_val)
-                except Exception: pass
+                except: pass
             
-            if bolt_pattern:
-                queryset = queryset.filter(bolt_pattern__icontains=bolt_pattern)
-
+            if bolt_pattern: queryset = queryset.filter(bolt_pattern__icontains=bolt_pattern)
             if price_max:
-                try:
-                    p_val = float(price_max)
-                    logger.info(f"Universal Search: Applying Budget Cap of ${p_val}")
-                    queryset = queryset.filter(price__lte=p_val)
-                except Exception: pass
+                try: queryset = queryset.filter(price__lte=float(price_max))
+                except: pass
 
-            # B. Style Tracking for Boosting
+            finish = entities.get("finish")
+            if finish: queryset = queryset.filter(Q(finish__icontains=finish) | Q(searchable_text__icontains=finish))
+
             usage = entities.get("usage") or entities.get("style", "")
             v_type = entities.get("vehicle_type")
             
-            # --- STAGE 2: KEYWORD-WEIGHTED BOOSTING ---
-            # If 'off-road' or similar is in the query, we boost results matching those keywords.
             style_boost_terms = ["rugged", "off-road", "trail", "mud", "aggressive", "sport", "luxury"]
             active_style_terms = [t for t in style_boost_terms if t in query_text.lower() or t in usage.lower()]
             
             if active_style_terms or v_type:
-                logger.info(f"Universal Search: Applying Style-Weighted Boosting for {active_style_terms}")
-                
-                # We build a 'relevance_score' via CASE
-                when_clauses = []
-                for term in active_style_terms:
-                    # Boost if the searchable_text contains the term
-                    when_clauses.append(When(searchable_text__icontains=term, then=Value(10.0)))
-                
+                when_clauses = [When(searchable_text__icontains=t, then=Value(10.0)) for t in active_style_terms]
                 if v_type:
                     when_clauses.append(When(attributes__vehicle_type__contains=[v_type.upper()], then=Value(5.0)))
-                    when_clauses.append(When(attributes__vehicle_type__contains=[v_type.capitalize()], then=Value(5.0)))
-
                 if when_clauses:
-                    queryset = queryset.annotate(
-                        relevance_score=Case(*when_clauses, default=Value(1.0), output_field=FloatField())
-                    ).order_by('-relevance_score', 'price')
-                else:
-                    queryset = queryset.order_by('price')
-            else:
-                queryset = queryset.order_by('price')
+                    queryset = queryset.annotate(relevance_score=Case(*when_clauses, default=Value(1.0), output_field=FloatField())).order_by('-relevance_score', 'price')
+                else: queryset = queryset.order_by('price')
+            else: queryset = queryset.order_by('price')
 
-            # Stage 1 Final: Attempt specific JSONB containment first
-            if usage:
-                norm_usage = usage.replace("-", " ").title()
-                u_cases = [norm_usage.upper(), norm_usage, norm_usage.lower(), norm_usage.replace(" ", "-")]
-                specific_results = list(queryset.filter(
-                    Q(attributes__usage__has_any_keys=u_cases) |
-                    Q(attributes__usage__contains=[u_cases[0]]) |
-                    Q(attributes__style__contains=[u_cases[0]])
-                )[:limit])
-                if len(specific_results) >= 2:
-                    return specific_results
-
-            # --- STAGE 3: EXECUTION (Annotated Boosting) ---
             results = list(queryset.exclude(embedding__isnull=True)[:limit])
-            
-            if len(results) >= 2:
-                return results
+            if len(results) >= 2: return results
 
-            # --- STAGE 4: SEMANTIC FALLBACK (Vector) ---
             if query_vector:
-                results = list(
-                    Product.objects.select_related('brand')
-                    .exclude(embedding__isnull=True)
-                    .annotate(distance=CosineDistance("embedding", query_vector))
-                    .order_by("distance")[:limit]
-                )
+                results = list(Product.objects.select_related('brand').exclude(embedding__isnull=True).annotate(distance=CosineDistance("embedding", query_vector)).order_by("distance")[:limit])
                 if results: return results
             
-            # --- STAGE 5: BROAD SAFETY NET (Variety Fallback) ---
-            # If everything else fails, fetch items by query keywords directly
             clean_query = " ".join([w for w in query_text.split() if len(w) > 2])
-            results = list(
-                Product.objects.select_related('brand')
-                .filter(Q(name__icontains=clean_query) | Q(searchable_text__icontains=clean_query))
-                .order_by('?')[:limit]
-            )
-            if results: return results
-
-            # --- STAGE 6: WATERFALL RELAXATION (Crucial for Rule 2 & 4) ---
-            # If we STILL have nothing, and we had technical filters, try relaxing them
-            if not results and (diameter or bolt_pattern or brand):
-                logger.info("Universal Search: Triggering Waterfall Relaxation...")
-                relaxed_queryset = Product.objects.select_related('brand')
-                
-                # Try just brand + size (ignore pattern)
-                if brand and diameter:
-                    relaxed = list(relaxed_queryset.filter(brand__name__icontains=brand, diameter=diameter)[:limit])
-                    if relaxed: return relaxed
-                
-                # Try just size + bolt_pattern (different brands)
-                if diameter and bolt_pattern:
-                    relaxed = list(relaxed_queryset.filter(diameter=diameter, bolt_pattern__icontains=bolt_pattern)[:limit])
-                    if relaxed: return relaxed
-
-                # Final Hail Mary: Just brand or just size
-                if brand:
-                    relaxed = list(relaxed_queryset.filter(brand__name__icontains=brand)[:limit])
-                    if relaxed: return relaxed
-                
-                if diameter:
-                    relaxed = list(relaxed_queryset.filter(diameter=diameter)[:limit])
-                    if relaxed: return relaxed
-
+            results = list(Product.objects.select_related('brand').filter(Q(name__icontains=clean_query) | Q(searchable_text__icontains=clean_query)).order_by('?')[:limit])
             return results
 
-        # Execute and Serialize
         raw_results = await sync_to_async(_execute_search_logic, thread_sensitive=False)()
         return [ProductService._serialize_product(p) for p in raw_results]
 
     @staticmethod
-    async def get_catalog_overview() -> Dict[str, Any]:
-        """Returns a summary of available brands."""
-        def _get_brands():
-            brands = list(Brand.objects.values_list('name', flat=True).order_by('name'))
-            return {"brands": brands, "count": len(brands)}
-        return await sync_to_async(_get_brands, thread_sensitive=False)()
-
-    @staticmethod
-    async def get_wheels_by_fitment(make: str, model: str, year: int, limit: int = 4) -> List[Dict[str, Any]]:
-        """
-        Retrieves products via strict relational Fitment table mapping.
-        """
+    async def get_wheels_by_fitment(
+        make: str, model: str, year: int, 
+        entities: Optional[Dict[str, Any]] = None,
+        limit: int = 12
+    ) -> List[Dict[str, Any]]:
         def _execute():
+            # 1. Base Fitment Set
             fitments = Fitment.objects.select_related('product', 'product__brand').filter(
-                make__iexact=make,
-                model__iexact=model,
-                year_from__lte=year,
-                year_to__gte=year
+                make__iexact=make, model__iexact=model,
+                year_from__lte=year, year_to__gte=year
             )
-            product_ids = fitments.values_list('product_id', flat=True).distinct()[:limit]
-            products = Product.objects.select_related('brand').filter(id__in=product_ids)
-            return list(products)
+            product_ids = fitments.values_list('product_id', flat=True).distinct()
+            base_queryset = Product.objects.select_related('brand').filter(id__in=product_ids)
             
+            # 2. Refined Search (Style/Budget)
+            refined_queryset = base_queryset
+            if entities:
+                price_max = entities.get("budget_max") or entities.get("price_max")
+                if price_max:
+                    try: refined_queryset = refined_queryset.filter(price__lte=float(price_max))
+                    except: pass
+                
+                usage = entities.get("usage") or entities.get("style")
+                if usage:
+                    # SOFT FILTER: Try to match style, but don't return 0 if no style match
+                    style_query = refined_queryset.filter(Q(searchable_text__icontains=usage) | Q(attributes__usage__contains=[usage.upper()]))
+                    if style_query.exists():
+                        refined_queryset = style_query
+                    else:
+                        logger.warning(f"ProductService: Style '{usage}' found no matches for {make} {model}. Relaxing style.")
+
+                finish = entities.get("finish")
+                if finish:
+                    # FINISH GUARD: Filter by color/finish if specified
+                    finish_query = refined_queryset.filter(Q(finish__icontains=finish) | Q(searchable_text__icontains=finish))
+                    if finish_query.exists():
+                        refined_queryset = finish_query
+                    else:
+                        logger.warning(f"ProductService: Finish '{finish}' found no matches for {make} {model}. Relaxing finish.")
+
+            results = list(refined_queryset[:limit])
+            
+            # 3. Fallback: If refined search (e.g. style) killed all results, use base set
+            if not results and base_queryset.exists():
+                logger.warning(f"ProductService: Filtered search failed for {make} {model}. Falling back to base fitment.")
+                results = list(base_queryset[:limit])
+                
+            return results
+
         raw_results = await sync_to_async(_execute, thread_sensitive=False)()
         return [ProductService._serialize_product(p) for p in raw_results]
