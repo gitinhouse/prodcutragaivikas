@@ -57,9 +57,16 @@ class ProductService:
         Returns availability status and details.
         """
         def _execute():
-            # Broad search to find the closest match
+            # 1. SMART SEARCH: Split Brand and Model for better matching
+            # Handles "Bbs Model-95" by searching for "Model-95"
+            name_parts = product_name.split()
+            core_name = name_parts[-1] if len(name_parts) > 1 else product_name
+            
             match = Product.objects.select_related('brand').filter(
-                Q(name__icontains=product_name) | Q(part_number__icontains=product_name)
+                Q(name__iexact=product_name) | 
+                Q(name__iexact=core_name) |
+                Q(part_number__iexact=product_name) |
+                Q(name__icontains=core_name)
             ).first()
             
             if not match:

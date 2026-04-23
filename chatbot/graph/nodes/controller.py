@@ -76,6 +76,10 @@ def _route(intent, state, result, updated_state, user_query):
     # ── PRODUCT DETAIL ────────────────────────
     if intent == "product_detail" or (intent == "info_request" and is_contextual):
         about = resolved_product or (shown_products[0] if shown_products else None)
+        # If the user asks for details but we can't identify WHICH wheel (half message)
+        if not about and not llm_selected:
+            return {**base, "action_type": "info", "cta_intent": "clarify_product"}
+            
         return {**base, "action_type": "info", "cta_intent": "product_detail",
                 "context_payload": {"about_product": about}}
 

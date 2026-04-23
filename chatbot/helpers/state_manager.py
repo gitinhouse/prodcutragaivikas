@@ -61,8 +61,25 @@ class StateManager:
         
         new_make = attrs.get("vehicle_make")
         new_model = attrs.get("vehicle_model")
+        old_make = vc.get("make")
+        
+        # WHEEL BRAND SHIELD: Don't reset if "new_make" is actually a wheel brand
+        WHEEL_BRANDS = ["bbs", "vossen", "fuel", "rohana", "tsw", "dirty life", "method", "american"]
+        is_wheel_brand = new_make and new_make.lower() in WHEEL_BRANDS
 
-        if new_make and new_model:
+        # RESET IF MAKE CHANGES (Even without model) - Guarded by Wheel Shield
+        if new_make and old_make and new_make.lower() != old_make.lower() and not is_wheel_brand:
+            logger.info(f"StateManager: Make changed from {old_make} to {new_make}. Resetting context.")
+            updates["extracted_entities"] = {}
+            updates["shown_products"] = []
+            updates["wheel_size"] = None
+            updates["resolved_product"] = None
+            updates["sales_stage"] = "discovery"
+            vc = {}
+            entities = {}
+        
+        # RESET IF FULL NEW CAR PROVIDED
+        elif new_make and new_model:
             old_car = f"{vc.get('make','')}{vc.get('model','')}".lower()
             new_car = f"{new_make}{new_model}".lower()
             if old_car and old_car != new_car:

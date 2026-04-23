@@ -107,6 +107,9 @@ IF Strategy == "brand_inquiry":
 - Provide a high-level overview of the elite brands we carry for their build (BBS, TSW, Fuel, Rohana).
 - "We carry a curated selection of elite brands for the {vehicle_type}, including BBS, TSW, and Rohana. Did you have a specific manufacturer in mind?"
 
+IF Strategy == "clarify_product":
+- "I'm ready to pull those technical specs for you. Which of those models would you like to dive into first?"
+
 ---
 RESPONSE LOGIC:
 - Maximum 3 lines.
