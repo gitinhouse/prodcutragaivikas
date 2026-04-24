@@ -152,16 +152,17 @@ class ProductService:
 
     @staticmethod
     async def get_wheels_by_fitment(
-        make: str, model: str, year: int, 
+        make: str, model: str, year: Optional[int] = None, 
         entities: Optional[Dict[str, Any]] = None,
         limit: int = 12
     ) -> List[Dict[str, Any]]:
         def _execute():
             # 1. Base Fitment Set
-            fitments = Fitment.objects.select_related('product', 'product__brand').filter(
-                make__iexact=make, model__iexact=model,
-                year_from__lte=year, year_to__gte=year
-            )
+            query = Q(make__iexact=make, model__iexact=model)
+            if year is not None:
+                query &= Q(year_from__lte=year, year_to__gte=year)
+                
+            fitments = Fitment.objects.select_related('product', 'product__brand').filter(query)
             product_ids = fitments.values_list('product_id', flat=True).distinct()
             base_queryset = Product.objects.select_related('brand').filter(id__in=product_ids)
             

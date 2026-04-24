@@ -58,7 +58,11 @@ def _route(intent, state, result, updated_state, user_query):
             return {**base, "action_type": "discovery", "cta_intent": "ask_vehicle"}
 
     # ── PURCHASE INTENT ───────────────────────
-    if intent == "purchase_intent" and shown_products:
+    if intent == "purchase_intent":
+        if not shown_products:
+            # If they try to buy but we haven't shown anything, don't hallucinate.
+            return {**base, "action_type": "discovery", "cta_intent": "ask_vehicle"}
+            
         matched = _match_product(user_query, shown_products, llm_selected)
         if matched:
             updated_state["resolved_product"] = matched
@@ -123,8 +127,8 @@ async def controller_node(state: GraphState):
         if result.get("intent") != "purchase_intent":
             result["intent"] = "product_search"
     
-    # 3. CONTEXTUAL LEAD CONFIRMATION (e.g. "same email", "on file")
-    elif bool(re.search(r"\b(same email|on file|already gave|you have it)\b", user_query)) and state.get("has_email"):
+    # 3. CONTEXTUAL LEAD CONFIRMATION (e.g. "same email", "on file", "wait")
+    elif bool(re.search(r"\b(same email|on file|already gave|you have it|wait|hold on|stop)\b", user_query)) and state.get("has_email"):
         result["intent"] = "purchase_intent"
         result["is_contextual"] = True
 

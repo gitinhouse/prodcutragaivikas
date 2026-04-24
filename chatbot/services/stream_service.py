@@ -96,7 +96,7 @@ class StreamService:
                 import time
                 start_time = time.time()
                 
-                async with asyncio.timeout(30.0):
+                async with asyncio.timeout(90.0):
                     async for event in graph.astream_events(initial_state, config, version="v2"):
                         kind = event["event"]
                         name = event["name"]

@@ -78,8 +78,17 @@ async def synthesizer_node(state: GraphState):
         is_relaxed=str(is_relaxed),
         stock_confirmed=str(stock_confirmed),
         product_data=formatted_products,
-        customer_contact=state.get("customer_email") or state.get("has_email") or "Not on file"
+        customer_contact=state.get("customer_email") or state.get("has_email") or ""
     )
+    
+    # 3.5 LOYALTY GUARD: Don't hallucinate "On File" if it's empty
+    has_contact = bool(state.get("customer_email") or state.get("has_email"))
+    if not has_contact:
+        # If we are in 'confirm_order_on_file' but have no email, FORCE back to 'ask_lead_info'
+        if cta_intent == "confirm_order_on_file":
+            logger.warning("Synthesizer: Redirecting confirm_order_on_file -> ask_lead_info (No contact found)")
+            cta_intent = "ask_lead_info"
+            full_system_prompt = full_system_prompt.replace("confirm_order_on_file", "ask_lead_info")
 
     # 4. LLM INVOCATION
     synth_history = full_history[-4:] if len(full_history) > 4 else full_history
@@ -101,10 +110,10 @@ async def synthesizer_node(state: GraphState):
         full_content = re.sub(pattern, "", full_content, flags=re.IGNORECASE).strip()
 
     # --- GLOBAL STRATEGY FIREWALL ---
-    # If we are NOT in the closing stage, but the LLM hallucinated lead-capture text:
-    if sales_stage != "closing":
-        # Hard-nuke any email/quote talk or "Excellent choice" if we aren't supposed to be closing
-        hallucination_pattern = r"(?i).*(excellent choice|stock is confirmed|what's your name|email address|send you the quote|official quote|excellent selection)[\.\!\?]?.*"
+    # 5. HALLUCINATION FIREWALL (CRITICAL)
+    # If we are NOT in the closing stage, or we have NO lead info, block purchase/loyalty hallucinations.
+    if sales_stage != "closing" or not has_contact:
+        hallucination_pattern = r"(?i).*(excellent choice|stock is confirmed|since I have your details|details on file|info on file|sending the quote|quote (is )?on the way).*"
         if re.search(hallucination_pattern, full_content):
             logger.warning(f"Synthesizer: Hallucination detected in stage '{sales_stage}'. Nuking LLM text.")
             if cta_intent == "show_options":

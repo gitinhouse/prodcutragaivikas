@@ -67,8 +67,12 @@ class StateManager:
         WHEEL_BRANDS = ["bbs", "vossen", "fuel", "rohana", "tsw", "dirty life", "method", "american"]
         is_wheel_brand = new_make and new_make.lower() in WHEEL_BRANDS
 
-        # RESET IF MAKE CHANGES (Even without model) - Guarded by Wheel Shield
-        if new_make and old_make and new_make.lower() != old_make.lower() and not is_wheel_brand:
+        # VEHICLE BRAND VALIDATION: Only reset if the new_make is a KNOWN automotive brand
+        KNOWN_CARS = ["honda", "bmw", "audi", "mercedes", "ford", "chevy", "chevrolet", "toyota", "nissan", "jeep", "dodge", "ram", "subaru", "lexus", "hyundai", "kia", "volkswagen", "porsche", "tesla", "gmc", "cadillac", "mazda"]
+        is_valid_car = new_make and new_make.lower() in KNOWN_CARS
+        
+        # RESET IF MAKE CHANGES (Even without model) - Guarded by Wheel Shield and Car Validation
+        if new_make and old_make and new_make.lower() != old_make.lower() and not is_wheel_brand and is_valid_car:
             logger.info(f"StateManager: Make changed from {old_make} to {new_make}. Resetting context.")
             updates["extracted_entities"] = {}
             updates["shown_products"] = []
