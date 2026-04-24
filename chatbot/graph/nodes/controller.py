@@ -13,7 +13,10 @@ def _match_product(query, shown_list, llm_selected=None):
     if not shown_list: return None
     if llm_selected and llm_selected in shown_list: return llm_selected
     for p in shown_list:
-        if p.lower() in query.lower(): return p
+        p_low = p.lower()
+        q_low = query.lower()
+        # Match if the product name is in the query, OR if the query contains the core model name (min 5 chars)
+        if p_low in q_low or (len(q_low) > 8 and q_low in p_low): return p
     return None
 
 def _route(intent, state, result, updated_state, user_query):
@@ -71,7 +74,10 @@ def _route(intent, state, result, updated_state, user_query):
             target_cta = "ask_lead_info" if not has_lead else "confirm_order_on_file"
             return {**base, "action_type": "recommend", "cta_intent": target_cta,
                     "context_payload": {"selected_product": matched}}
-        return {**base, "action_type": "recommend", "cta_intent": "show_options"}
+            
+        if vehicle_locked:
+            return {**base, "action_type": "recommend", "cta_intent": "show_options"}
+        return {**base, "action_type": "discovery", "cta_intent": "ask_vehicle"}
 
     # ── BRAND INQUIRY ─────────────────────────
     if intent == "brand_inquiry":
@@ -90,25 +96,26 @@ def _route(intent, state, result, updated_state, user_query):
     # ── FALLBACK ──────────────────────────────
     if vehicle_locked:
         return {**base, "action_type": "recommend", "cta_intent": "show_options"}
-    return {**base, "action_type": "info", "cta_intent": "clarify"}
+    return {**base, "action_type": "discovery", "cta_intent": "ask_vehicle"}
 
 async def controller_node(state: GraphState):
     user_query = state.get("sanitized_input", state.get("last_user_query", "")).lower()
     full_history = state.get("messages", [])
 
-    # 1. LLM CLASSIFICATION (Restore Search Intelligence)
+    # 1. LLM CLASSIFICATION (Structured Intelligence)
+    from chatbot.graph.schemas import ControllerSchema
     llm = get_llm()
     try:
-        raw_response = await llm.ainvoke([
+        structured_llm = llm.with_structured_output(ControllerSchema)
+        raw_result = await structured_llm.ainvoke([
             {"role": "system", "content": CLASSIFIER_PROMPT},
             *(full_history[-6:])
         ])
-        raw_text = raw_response.content if hasattr(raw_response, 'content') else str(raw_response)
-        cleaned = re.sub(r"```(?:json)?", "", raw_text).strip().strip("`").strip()
-        json_match = re.search(r'(\{.*\})', cleaned, re.DOTALL)
-        result = json.loads(json_match.group(1)) if json_match else {}
-    except:
-        result = {"intent": "product_search"}
+        # Convert Pydantic model to dict for downstream logic compatibility
+        result = raw_result.model_dump()
+    except Exception as e:
+        logger.error(f"Controller: Structured Output failed: {e}")
+        result = {"intent": "product_search", "category": "wheels", "attributes": {}}
 
     # Apply Defaults
     result.setdefault("intent", "product_search")
@@ -122,12 +129,28 @@ async def controller_node(state: GraphState):
     
     if is_thanks:
         result["intent"] = "thank_you"
-    elif is_short_confirm or bool(re.search(r"\b(20\d{2}|audi|bmw|civic|honda|mercedes)\b", user_query)):
+    elif bool(re.search(r"\b(20\d{2}|audi|bmw|civic|honda|mercedes|tesla|toyota|jeep|ford|chevy|dodge|ram|maruti|suzuki|tata|mahindra)\b", user_query)) or bool(re.search(r"\$\d+|under \d+|budget", user_query)):
         # Only override to search if we aren't already in a purchase flow
-        if result.get("intent") != "purchase_intent":
+        if result.get("intent") not in ["purchase_intent", "product_detail"]:
             result["intent"] = "product_search"
     
-    # 3. CONTEXTUAL LEAD CONFIRMATION (e.g. "same email", "on file", "wait")
+    # 2.5 SMART CONFIRMATION (Prevent 'Ok' Trap)
+    # If user says 'ok' or 'yes', only treat as purchase if a product is ALREADY resolved
+    if is_short_confirm:
+        if state.get("resolved_product"):
+            result["intent"] = "purchase_intent"
+        else:
+            result["intent"] = "info_request" # Treat as neutral continuation
+            result["is_contextual"] = True
+    
+    # 3. CONTEXTUAL LEAD & DETAIL OVERRIDES
+    has_details_intent = bool(re.search(r"\b(detail|specs|specification|more on|tell me about|how many|available|stock|price|cost)\b", user_query))
+    matched_context_product = _match_product(user_query, state.get("shown_products", []))
+
+    if has_details_intent and matched_context_product:
+        result["intent"] = "product_detail"
+        result["selected_product"] = matched_context_product
+        result["is_contextual"] = True
     elif bool(re.search(r"\b(same email|on file|already gave|you have it|wait|hold on|stop)\b", user_query)) and state.get("has_email"):
         result["intent"] = "purchase_intent"
         result["is_contextual"] = True

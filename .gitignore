@@ -172,3 +172,6 @@ postgres_data/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Project Backups
+_backup*

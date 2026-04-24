@@ -34,7 +34,7 @@ async def lead_evaluator_node(state: GraphState):
     # --- RULE: RESPECT CONTROLLER'S DECISION (UNLESS ACTION FAILED) ---
     # If the Controller set show_options but Recommender found nothing, we MUST pivot.
     controller_intent = state.get("cta_intent", "")
-    PASS_THROUGH_INTENTS = ["show_options", "ask_lead_info", "redirect_to_domain", "clarify", "recovery", "final_thank_you"]
+    PASS_THROUGH_INTENTS = ["show_options", "ask_lead_info", "redirect_to_domain", "clarify", "recovery", "final_thank_you", "ask_vehicle", "no_results"]
     
     if controller_intent in PASS_THROUGH_INTENTS and action_type != "no_fitment_found":
         logger.info(f"Lead Evaluator: Passing through Controller strategy '{controller_intent}'.")
@@ -50,11 +50,14 @@ async def lead_evaluator_node(state: GraphState):
 
     # B. NO FITMENT FOUND
     elif action_type == "no_fitment_found":
-        cta_intent = "technical_pivot"
+        if not vehicle_context.get("year"):
+            cta_intent = "ask_vehicle"
+        else:
+            cta_intent = "no_results"
 
     # C. PURE DISCOVERY (no vehicle at all)
     elif user_stage == "discovery":
-        if not (vehicle_context.get("make") and vehicle_context.get("model")):
+        if not (vehicle_context.get("make") and vehicle_context.get("model") and vehicle_context.get("year")):
             cta_intent = "ask_vehicle"
         else:
             cta_intent = "show_options"

@@ -167,7 +167,23 @@ class StreamService:
                     if not sales_context:
                         session_obj.identified_budget = state_values.get("identified_budget", session_obj.identified_budget)
                         session_obj.identified_style = state_values.get("identified_style", session_obj.identified_style)
-                        
+                    
+                    # --- LEAD SYNCHRONIZATION ---
+                    from chatbot.models import Lead
+                    email = state_values.get("customer_email")
+                    name = state_values.get("customer_name")
+                    if email:
+                        lead_obj, _ = await sync_to_async(Lead.objects.get_or_create)(
+                            email=email,
+                            defaults={"first_name": name or "Valued Customer"}
+                        )
+                        # Update name if it was previously generic
+                        if name and lead_obj.first_name == "Valued Customer":
+                            lead_obj.first_name = name
+                            await sync_to_async(lead_obj.save)()
+                            
+                        session_obj.lead = lead_obj
+
                     await sync_to_async(session_obj.save)()
                     logger.info(f"Session Sync Success: {session_obj.sales_stage}")
             except Exception as e:

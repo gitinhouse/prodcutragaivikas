@@ -52,7 +52,9 @@ class GraphState(MessagesState):
     shown_products: List[str] # Persistence list to avoid repeats
     has_valid_results: bool # True if recommender found matches
     resolved_product: Optional[str] # Currently discussed product
+    customer_name: Optional[str] # Captured lead name
     customer_email: Optional[str] # Captured lead email
     has_email: bool # True once email is captured
     final_response: str
+    last_final_response: Optional[str]
     metrics: Dict[str, Any] # time, tokens, model_info

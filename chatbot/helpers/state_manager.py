@@ -68,7 +68,7 @@ class StateManager:
         is_wheel_brand = new_make and new_make.lower() in WHEEL_BRANDS
 
         # VEHICLE BRAND VALIDATION: Only reset if the new_make is a KNOWN automotive brand
-        KNOWN_CARS = ["honda", "bmw", "audi", "mercedes", "ford", "chevy", "chevrolet", "toyota", "nissan", "jeep", "dodge", "ram", "subaru", "lexus", "hyundai", "kia", "volkswagen", "porsche", "tesla", "gmc", "cadillac", "mazda"]
+        KNOWN_CARS = ["honda", "bmw", "audi", "mercedes", "ford", "chevy", "chevrolet", "toyota", "nissan", "jeep", "dodge", "ram", "subaru", "lexus", "hyundai", "kia", "volkswagen", "porsche", "tesla", "gmc", "cadillac", "mazda", "maruti", "suzuki", "tata", "mahindra", "hyundai", "kia"]
         is_valid_car = new_make and new_make.lower() in KNOWN_CARS
         
         # RESET IF MAKE CHANGES (Even without model) - Guarded by Wheel Shield and Car Validation
@@ -82,8 +82,8 @@ class StateManager:
             vc = {}
             entities = {}
         
-        # RESET IF FULL NEW CAR PROVIDED
-        elif new_make and new_model:
+        # RESET IF FULL NEW CAR PROVIDED (Guarded by Wheel Brand Shield)
+        elif new_make and new_model and not is_wheel_brand:
             old_car = f"{vc.get('make','')}{vc.get('model','')}".lower()
             new_car = f"{new_make}{new_model}".lower()
             if old_car and old_car != new_car:
@@ -101,13 +101,22 @@ class StateManager:
                 vc[key] = attrs[attr_key]
         
         updates["vehicle_context"] = vc
-        updates["vehicle_locked"] = bool(vc.get("make") and vc.get("model"))
+        # MANDATORY VALIDATION: Locked only if we have Year, Make, and Model to ensure fitment precision
+        updates["vehicle_locked"] = bool(vc.get("year") and vc.get("make") and vc.get("model"))
 
         if attrs.get("size"):
             updates["wheel_size"] = attrs["size"]
             
+        if attrs.get("wheel_brand"):
+            updates["wheel_brand"] = attrs["wheel_brand"]
+            
+        if attrs.get("budget_max"):
+            updates["budget_max"] = attrs["budget_max"]
+            
         entities.update({
             "size": updates.get("wheel_size", state.get("wheel_size")),
+            "wheel_brand": updates.get("wheel_brand", state.get("wheel_brand")),
+            "budget_max": updates.get("budget_max", state.get("budget_max")),
             "vehicle_make": vc.get("make"),
             "vehicle_model": vc.get("model")
         })

@@ -293,38 +293,18 @@ class UploadService:
 
     @classmethod
     def _extract_ai_data(cls, name: str, description: str) -> Dict[str, Any]:
+        from chatbot.graph.schemas import ProductAIExtraction
         llm = get_llm()
-        prompt = f"""
-        Analyze the wheel product below and extract attributes/summary.
         
-        NAME: {name}
-        DESCRIPTION: {description}
-        
-        Return ONLY valid JSON with these keys:
-        - "attributes": {{ 
-            "vehicle_type": [], 
-            "usage": [], 
-            "style": [], 
-            "terrain": [], 
-            "durability": "" 
-          }}
-        - "features": [] (list of key technical features)
-        - "ai_summary": "Clean one-sentence marketing summary"
-
-        CRITICAL: All values in 'attributes' MUST be in Title Case and Singular (e.g., 'Truck', not 'trucks'; 'SUV', not 'suvs').
-        """
+        prompt = f"Analyze the wheel product below and extract attributes/summary.\n\nNAME: {name}\nDESCRIPTION: {description}"
 
         try:
-            response = llm.invoke([
-                SystemMessage(content="You are a wheel catalog specialist. Return strictly structured JSON."),
+            structured_llm = llm.with_structured_output(ProductAIExtraction)
+            result = structured_llm.invoke([
+                SystemMessage(content="You are a wheel catalog specialist."),
                 HumanMessage(content=prompt)
             ])
-            json_str = response.content
-            if "```json" in json_str:
-                json_str = json_str.split("```json")[1].split("```")[0].strip()
-            
-            data = json.loads(json_str)
-            return data
+            return result.model_dump()
         except Exception as e:
             logger.warning(f"AI Enhancement failed for {name}: {str(e)}. Using fallback.")
             return {

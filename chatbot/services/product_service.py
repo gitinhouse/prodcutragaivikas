@@ -157,8 +157,18 @@ class ProductService:
         limit: int = 12
     ) -> List[Dict[str, Any]]:
         def _execute():
-            # 1. Base Fitment Set
-            query = Q(make__iexact=make, model__iexact=model)
+            # 1. Flexible Model Matching
+            # Normalize 'f150' -> 'f-150' or 'f 150'
+            clean_model = model.replace("-", "").replace(" ", "").lower()
+            
+            # 2. Base Fitment Set
+            # Use icontains or a list of variations for the model
+            query = Q(make__iexact=make)
+            if clean_model == "f150":
+                query &= Q(model__icontains="f-150") | Q(model__icontains="f150")
+            else:
+                query &= Q(model__iexact=model)
+                
             if year is not None:
                 query &= Q(year_from__lte=year, year_to__gte=year)
                 

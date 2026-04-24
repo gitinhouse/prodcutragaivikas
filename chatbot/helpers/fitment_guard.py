@@ -19,6 +19,18 @@ class FitmentGuard:
         "jeep": {"max_diameter": 24, "max_width": 12.0}
     }
 
+    # Bolt Pattern Knowledge Base (The 'Fitment Bible')
+    MAKE_PATTERNS = {
+        "ford": ["6x135", "5x108", "5x114.3"], # F-150 is 6x135, Mustang is 5x114.3
+        "toyota": ["6x139.7", "5x114.3", "5x150"], # Tacoma 6-lug, Camry 5-lug, Tundra 5-lug
+        "bmw": ["5x120", "5x112"],
+        "audi": ["5x112"],
+        "mercedes": ["5x112"],
+        "honda": ["5x114.3", "5x120"],
+        "tesla": ["5x114.3", "5x120"],
+        "jeep": ["5x127", "5x114.3"]
+    }
+
     @staticmethod
     def validate(vehicle_context, product):
         """
@@ -59,5 +71,28 @@ class FitmentGuard:
                 return False
 
         return True
+
+    @staticmethod
+    def validate_pattern(vehicle_make, product_pattern):
+        """
+        Technical verification of bolt pattern against make-specific standards.
+        """
+        if not vehicle_make or not product_pattern:
+            return True # Insufficient data to reject
+            
+        make_low = vehicle_make.lower().strip()
+        pattern_low = product_pattern.lower().replace(" ", "")
+        
+        # Resolve patterns for the make
+        valid_patterns = FitmentGuard.MAKE_PATTERNS.get(make_low)
+        if not valid_patterns:
+            return True # Make unknown to guard
+            
+        # Check for direct match or partial match (e.g. '5x112' in '5x112 / 5x120')
+        if any(p.lower() in pattern_low for p in valid_patterns):
+            return True
+            
+        logger.warning(f"FitmentGuard: BOLT PATTERN REJECTED. {product_pattern} is technically impossible for {vehicle_make}.")
+        return False
 
 import re # Needed for the static method
