@@ -4,8 +4,19 @@ import re
 from langchain_core.messages import AIMessage
 from chatbot.graph.state import GraphState
 from chatbot.helpers.constants import SAFE_GREETINGS, STATIC_GREETINGS, DomainTypes, STATIC_MESSAGES
-from chatbot.helpers.prompts import SYNTHESIZER_PROMPT_TEMPLATE
+import random
+from chatbot.helpers.prompts import SYSTEM_CORE_PROMPT, STRATEGY_TEMPLATES, CONTEXT_BLOCK_TEMPLATE, VARIATION_POOLS
 from config.llm_config import get_llm
+
+def get_dynamic_variation(category: str, last_response: str = "") -> str:
+    """Selects a random variation from the pool, avoiding direct repetition."""
+    pool = VARIATION_POOLS.get(category, [])
+    if not pool:
+        return "I'm here to help with your build. What's on your mind?"
+    
+    # Filter out the last response to avoid back-to-back repetition
+    valid_options = [v for v in pool if v.strip().lower() not in last_response.strip().lower()]
+    return random.choice(valid_options if valid_options else pool)
 
 # MASTER LOGGER FOR TRACEABILITY
 logger = logging.getLogger("chatbot.nodes.synthesizer")
@@ -54,9 +65,9 @@ async def synthesizer_node(state: GraphState):
         for p in products:
             reason = p.get("ai_reason", "Premium fitment")
             stock = p.get("stock", 0)
-            price = f"${p.get('price')}" if p.get("price") else "N/A"
-            finish = p.get("finish", "Premium")
-            pattern = p.get("bolt_pattern", "Verified Fitment")
+            price = f"${p.get('price')}" if p.get("price") is not None else "N/A"
+            finish = p.get("finish") or "Premium"
+            pattern = p.get("bolt_pattern") or "Fitment being verified"
             product_lines.append(f"- **{p.get('marketing_name')}** | {price} ({stock} in stock)\n  *Specs: {finish} | {pattern} | {reason}*")
         formatted_products = "\n".join(product_lines)
     else:
@@ -65,40 +76,40 @@ async def synthesizer_node(state: GraphState):
         else:
             formatted_products = "[NOT_FOUND] No matches."
 
-    # 3. RENDER TEMPLATE
+    # 3. LOYALTY GUARD: Don't hallucinate "On File" if it's empty
+    has_contact = bool(state.get("customer_email") or state.get("has_email"))
+    if not has_contact and cta_intent == "confirm_order_on_file":
+        logger.warning("Synthesizer: Redirecting confirm_order_on_file -> ask_lead_info (No contact found)")
+        cta_intent = "ask_lead_info"
+
+    # 4. RENDER 3-LAYER TEMPLATE
     attrs = state.get("extracted_entities", {})
     vehicle_context = state.get("vehicle_context", {})
     vehicle_name = f"{vehicle_context.get('year','')} {vehicle_context.get('make','')} {vehicle_context.get('model','')}".strip()
     
-    full_system_prompt = SYNTHESIZER_PROMPT_TEMPLATE.format(
-        cta_intent=cta_intent,
-        sales_stage=sales_stage,
-        action_type=action_type,
+    # Assembly
+    strategy_text = STRATEGY_TEMPLATES.get(cta_intent, STRATEGY_TEMPLATES["clarify"])
+    
+    context_block = CONTEXT_BLOCK_TEMPLATE.format(
+        strategy_text=strategy_text,
         vehicle_type=vehicle_name if vehicle_name else "your vehicle",
-        budget=f"${attrs.get('budget_max')}" if attrs.get("budget_max") else "your budget",
-        style=attrs.get("style") or "Not specified",
-        resolved_product=state.get("resolved_product") or "None",
-        is_relaxed=str(is_relaxed),
-        stock_confirmed=str(stock_confirmed),
-        product_data=formatted_products,
-        presentation_mode="NEW_OPTIONS" if raw_data.get("is_new_recommendation") else "PREVIOUS_RECAP",
         vehicle_make=vehicle_context.get("make") or "your vehicle",
         vehicle_model=vehicle_context.get("model") or "the vehicle",
+        sales_stage=sales_stage,
         customer_name=state.get("customer_name") or "valued customer",
         customer_contact=state.get("customer_email") or state.get("has_email") or "Not on file",
+        stock_confirmed=str(stock_confirmed),
         total_results=raw_data.get("total_results", 0),
         shown_results=raw_data.get("shown_results", 0),
-        last_response=state.get("last_final_response", "None")
+        last_response=state.get("last_final_response", "None"),
+        relaxation_trace=", ".join(raw_data.get("relaxation_steps", [])) if raw_data.get("relaxation_steps") else "None",
+        resolved_product=state.get("resolved_product") or "None",
+        validation_status=raw_data.get("validation_status", "None"),
+        validation_notes=raw_data.get("validation_notes", "None"),
+        product_data=formatted_products
     )
     
-    # 3.5 LOYALTY GUARD: Don't hallucinate "On File" if it's empty
-    has_contact = bool(state.get("customer_email") or state.get("has_email"))
-    if not has_contact:
-        # If we are in 'confirm_order_on_file' but have no email, FORCE back to 'ask_lead_info'
-        if cta_intent == "confirm_order_on_file":
-            logger.warning("Synthesizer: Redirecting confirm_order_on_file -> ask_lead_info (No contact found)")
-            cta_intent = "ask_lead_info"
-            full_system_prompt = full_system_prompt.replace("confirm_order_on_file", "ask_lead_info")
+    full_system_prompt = f"{SYSTEM_CORE_PROMPT}\n{context_block}"
 
     # 4. LLM INVOCATION
     synth_history = full_history[-4:] if len(full_history) > 4 else full_history
@@ -115,9 +126,14 @@ async def synthesizer_node(state: GraphState):
     logger.info(f"Synthesizer: Strategy='{cta_intent}' Products={len(products)} LLM_Length={len(full_content)}")
 
     # --- REPETITION GUARD (SIMILARITY) ---
-    last_resp = state.get("last_final_response", "").lower()
-    if last_resp and full_content.lower().strip() == last_resp.strip():
-        logger.warning("Synthesizer: Perfect repetition detected. Forcing variation.")
+    def clean_text(t):
+        return re.sub(r'[^\w\s]', '', t.lower()).strip()
+        
+    last_resp_clean = clean_text(state.get("last_final_response", ""))
+    full_content_clean = clean_text(full_content)
+
+    if last_resp_clean and full_content_clean == last_resp_clean:
+        logger.warning("Synthesizer: Perfect/Punctuation-only repetition detected. Forcing variation.")
         if cta_intent == "show_options":
             full_content = f"Beyond those styles, we also have {raw_data.get('total_results')} other matches. Are you looking for a specific finish like matte black or silver?"
         elif cta_intent == "ask_vehicle":
@@ -137,38 +153,25 @@ async def synthesizer_node(state: GraphState):
         zero_results_pattern = r"(?i).*(identified 0|top 0|0 styles|0 options|0 matches).*"
         if re.search(zero_results_pattern, full_content):
             logger.warning("Synthesizer: LLM tried to use results template for 0 results. Nuking.")
-            if cta_intent == "ask_vehicle":
-                full_content = f"Excellent, a {vehicle_context.get('make', 'BMW')}. To pull the exact fitment specs from our database, could you let me know what year you're driving?"
-            else:
-                full_output = f"I've checked our expert inventory for the {vehicle_name}. While I didn't find a perfect match for those specific specs, I can suggest some elite alternatives if we adjust the size or brand. What year is your vehicle?"
-                full_content = full_output
+            full_content = get_dynamic_variation("no_results", last_resp)
 
     # If we are NOT in the closing stage, or we have NO lead info, block purchase/loyalty hallucinations.
     if sales_stage != "closing" or not has_contact:
         hallucination_pattern = r"(?i).*(excellent choice|stock is confirmed|since I have your details|details on file|info on file|sending the quote|quote (is )?on the way).*"
         if re.search(hallucination_pattern, full_content):
             logger.warning(f"Synthesizer: Hallucination detected in stage '{sales_stage}'. Nuking LLM text.")
-            if cta_intent == "show_options":
-                full_content = f"I've verified the fitment for your {vehicle_name}. Here are some premium options for your build:"
-            elif cta_intent == "ask_vehicle":
-                full_content = f"I've got a great selection of wheels for your {vehicle_name}. To be 100% sure on fitment, is that the exact model you're outfitting?"
-            else:
-                full_content = "I'm ready to find your perfect wheels. What specifically are you looking for in terms of style or performance?"
+            full_content = get_dynamic_variation("hallucination_guard", last_resp)
 
     # --- FINAL ASSEMBLY ---
     # ABSOLUTE INTENT ENFORCEMENT: If the tactical goal is to ask for a vehicle/year,
     # we MUST NOT allow the LLM to talk about results (which would be 0 anyway).
     if cta_intent == "ask_vehicle":
-        # Force a professional, helpful recovery based on what we know
-        make = vehicle_context.get('make')
-        if make:
-            final_output = f"Excellent choice on the {make}. To pull the exact technical fitment specs from our database, could you let me know what year you're driving?"
-        else:
-            final_output = "I'm ready to find the perfect wheels for your build. To get started, what kind of vehicle are we outfitting today?"
+        # Force a professional, helpful recovery using variation pools
+        final_output = get_dynamic_variation("ask_vehicle", last_resp)
     
     elif raw_data.get("total_results", 0) == 0 or "identified 0" in full_content:
         # Fallback for no_results or other failures
-        final_output = f"I've checked our expert inventory for the {vehicle_name}. While I didn't find a perfect fitment match for those specific specs, I can suggest some elite alternatives if we adjust the size or brand. What year is your vehicle?"
+        final_output = get_dynamic_variation("no_results", last_resp)
     else:
         # Normal flow: Use LLM content but ensure it has text
         lines = full_content.strip().split("\n")
@@ -192,8 +195,6 @@ async def synthesizer_node(state: GraphState):
         else:
             final_output = "I'm here to ensure your build is perfect. How can I best assist you with your wheel selection today?"
 
-    if product_lines:
-        final_output += "\n\n" + "\n".join(product_lines)
 
     return {
         "messages": [AIMessage(content=final_output)],

@@ -83,6 +83,8 @@ async def info_node(state: GraphState):
             "action": "info",
             "cta_intent": cta_intent,
             "product_info": final_product_data or {"name": "General Inquiries", "details": "Expert advice requested."},
+            "total_results": len(results),
+            "shown_results": 1 if final_product_data else 0,
             "allow_lead_capture": allow_lead
         },
         "resolved_product": final_product_data.get("name") if final_product_data else None

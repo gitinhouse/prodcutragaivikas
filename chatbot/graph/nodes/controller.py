@@ -45,6 +45,13 @@ def _route(intent, state, result, updated_state, user_query):
     if intent == "greeting":
         return {**base, "action_type": "info", "cta_intent": "greeting"}
 
+    # ── CONFIDENCE GUARD (Pre-Frontal Cortex) ──
+    confidence = result.get("confidence", 1.0)
+    missing = result.get("missing_fields", [])
+    if confidence < 0.50 or (any("vehicle" in m for m in missing) and intent in ["fitment_lookup", "recommendation"]):
+        logger.info(f"Controller: Low confidence ({confidence}) or missing fields {missing}. Triggering clarification.")
+        return {**base, "action_type": "discovery", "cta_intent": "ask_vehicle"}
+
     # ── OUT OF SCOPE ──────────────────────────
     if intent == "out_of_scope":
         return {**base, "action_type": "info", "cta_intent": "recovery"}
@@ -52,9 +59,15 @@ def _route(intent, state, result, updated_state, user_query):
     # ── THANK YOU ─────────────────────────────
     if intent == "thank_you":
         return {**base, "action_type": "info", "cta_intent": "final_thank_you"}
+        
+    # ── FITMENT CHECK ─────────────────────────
+    if intent == "fitment_check":
+        if vehicle_locked:
+            return {**base, "action_type": "fitment_validation", "cta_intent": "fitment_summary"}
+        return {**base, "action_type": "discovery", "cta_intent": "ask_vehicle"}
 
-    # ── PRODUCT SEARCH ────────────────────────
-    if intent == "product_search":
+    # ── PRODUCT SEARCH / FITMENT LOOKUP / RECOMMENDATION ──
+    if intent in ["product_search", "fitment_lookup", "recommendation"]:
         if vehicle_locked:
             return {**base, "action_type": "recommend", "cta_intent": "show_options"}
         else:
@@ -68,12 +81,12 @@ def _route(intent, state, result, updated_state, user_query):
             
         matched = _match_product(user_query, shown_products, llm_selected)
         if matched:
-            updated_state["resolved_product"] = matched
-            updated_state["sales_stage"] = "closing"
             # LOYALTY GUARD
             target_cta = "ask_lead_info" if not has_lead else "confirm_order_on_file"
             return {**base, "action_type": "recommend", "cta_intent": target_cta,
-                    "context_payload": {"selected_product": matched}}
+                    "context_payload": {"selected_product": matched},
+                    "resolved_product": matched,
+                    "sales_stage": "closing"}
             
         if vehicle_locked:
             return {**base, "action_type": "recommend", "cta_intent": "show_options"}
@@ -135,19 +148,29 @@ async def controller_node(state: GraphState):
             result["intent"] = "product_search"
     
     # 2.5 SMART CONFIRMATION (Prevent 'Ok' Trap)
-    # If user says 'ok' or 'yes', only treat as purchase if a product is ALREADY resolved
+    # If user says 'ok' or 'yes', only treat as purchase if:
+    # 1. A product is ALREADY resolved
+    # 2. The bot DID NOT just ask if the user wants to explore more/others
+    last_cta = state.get("cta_intent", "")
+    last_action = state.get("last_action", "")
+    
+    # These CTAs indicate the bot is offering MORE options, so 'yes' means 'show me more'
+    is_offering_more = last_cta in ["show_options", "clarify_product"] or last_action in ["no_fitment_found", "out_of_stock"]
+
     if is_short_confirm:
-        if state.get("resolved_product"):
+        if state.get("resolved_product") and not is_offering_more:
             result["intent"] = "purchase_intent"
         else:
-            result["intent"] = "info_request" # Treat as neutral continuation
+            # If we were offering more, 'yes' maps to show_more_options
+            result["intent"] = "show_more_options" if is_offering_more else "info_request"
             result["is_contextual"] = True
     
     # 3. CONTEXTUAL LEAD & DETAIL OVERRIDES
     has_details_intent = bool(re.search(r"\b(detail|specs|specification|more on|tell me about|how many|available|stock|price|cost)\b", user_query))
     matched_context_product = _match_product(user_query, state.get("shown_products", []))
 
-    if has_details_intent and matched_context_product:
+    if matched_context_product:
+        # If they explicitly named an on-screen product, treat it as a product_detail intent
         result["intent"] = "product_detail"
         result["selected_product"] = matched_context_product
         result["is_contextual"] = True
@@ -155,12 +178,24 @@ async def controller_node(state: GraphState):
         result["intent"] = "purchase_intent"
         result["is_contextual"] = True
 
-    # 3. DOMAIN LOCK
+    # 3.5 MEMORY LAYER: REJECTED PRODUCTS
+    rejected_products = state.get("rejected_products", [])
+    reject_patterns = r"(?i)\b(don't like|not the|remove|ugly|different|hate|no|don't want)\b"
+    if re.search(reject_patterns, user_query):
+        matched_reject = _match_product(user_query, state.get("shown_products", []))
+        if matched_reject and matched_reject not in rejected_products:
+            rejected_products.append(matched_reject)
+            logger.info(f"Memory Layer: User rejected '{matched_reject}'")
+
+    # 3.6 DOMAIN LOCK
     if result.get("category") == "tires" and not bool(re.search(r"\b(wheel|rim)\b", user_query)):
         return {**state, "action_type": "hard_block", "cta_intent": "redirect_to_domain"}
 
     # 4. EXECUTE
     state_updates = StateManager.process_state(state, result, user_query)
+    
+    # Inject rejected products into state updates
+    state_updates["rejected_products"] = rejected_products
     
     # Update temporary state for routing logic
     temp_state = {**state, **state_updates}

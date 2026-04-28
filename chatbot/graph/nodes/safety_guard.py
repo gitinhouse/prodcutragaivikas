@@ -1,7 +1,8 @@
 import logging
 import re
 from chatbot.graph.state import GraphState
-from chatbot.helpers.prompts import SAFETY_GUARD_MESSAGES
+import random
+from chatbot.helpers.prompts import VARIATION_POOLS
 from langchain_core.messages import AIMessage
 
 # 🔥 MASTER LOGGER FOR TRACEABILITY
@@ -72,7 +73,7 @@ def safety_guard_node(state: GraphState):
         # 3. CONTEXTUAL RECOVERY
         if not sanitized_lines or (hallucination_triggered and len(sanitized_lines) < 2):
             logger.warning("Safety Guard: Significant hallucination. Serving safe recovery.")
-            fallback = "I found some great options, but I want to double-check the latest availability for your fitment. Do you have a preferred wheel brand?"
+            fallback = random.choice(VARIATION_POOLS.get("hallucination_guard", ["I'm double-checking the specs for you..."]))
             return {"final_response": fallback, "messages": [AIMessage(content=fallback)]}
         
         # Reassemble the sanitized response

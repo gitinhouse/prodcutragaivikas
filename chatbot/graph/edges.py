@@ -24,6 +24,7 @@ async def route_to_action(state: GraphState):
         "recommend": "recommender_node",
         "info": "info_node",
         "discovery": "discovery_node",
+        "fitment_validation": "fitment_node",
         "hesitant": "info_node", # Info node handles hesitations with technical/value value-add
         "pivot": "discovery_node", # Discovery node handles pivots back to wheels
         "hard_block": "discovery_node" # Blocks routed through discovery for synthesis

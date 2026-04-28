@@ -7,6 +7,7 @@ from chatbot.graph.nodes.controller import controller_node
 from chatbot.graph.nodes.clarify import clarify_node 
 from chatbot.graph.nodes.recommender import recommender_node 
 from chatbot.graph.nodes.info_node import info_node
+from chatbot.graph.nodes.fitment_node import fitment_node
 from chatbot.graph.nodes.lead_evaluator import lead_evaluator_node
 from chatbot.graph.nodes.synthesizer import synthesizer_node
 from chatbot.graph.nodes.safety_guard import safety_guard_node
@@ -31,6 +32,7 @@ def create_sales_graph(checkpointer=None):
     workflow.add_node("discovery_node", clarify_node)
     workflow.add_node("recommender_node", recommender_node)
     workflow.add_node("info_node", info_node)
+    workflow.add_node("fitment_node", fitment_node)
 
     # 4. Evaluation & Synthesis Level
     workflow.add_node("Lead_evaluator", lead_evaluator_node)
@@ -51,6 +53,7 @@ def create_sales_graph(checkpointer=None):
             "recommender_node": "recommender_node",
             "info_node": "info_node",
             "discovery_node": "discovery_node",
+            "fitment_node": "fitment_node",
             "hesitation_node": "info_node", # Merged hesitation into info for simplicity
             "lead_capture_node": "info_node", # Merged lead_capture entry into info
             "fallback_node": "discovery_node" # Merged fallback into discovery
@@ -58,7 +61,7 @@ def create_sales_graph(checkpointer=None):
     )
     
     # Action Consolidation -> Lead Evaluator
-    action_nodes = ["recommender_node", "info_node", "discovery_node"]
+    action_nodes = ["recommender_node", "info_node", "discovery_node", "fitment_node"]
     for node in action_nodes:
         workflow.add_edge(node, "Lead_evaluator")
         

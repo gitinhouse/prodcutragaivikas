@@ -34,11 +34,12 @@ class ProductAIExtraction(BaseModel):
 
 class ControllerSchema(BaseModel):
     """The structured output for intent classification and entity extraction."""
-    intent: str = Field(description="The primary intent: product_search, show_more_options, product_detail, brand_inquiry, purchase_intent, greeting, info_request, out_of_scope")
+    intent: str = Field(description="The primary intent: fitment_lookup, fitment_check, recommendation, product_search, show_more_options, product_detail, brand_inquiry, purchase_intent, greeting, info_request, out_of_scope")
     category: str = Field(default="wheels", description="The product category: wheels, tires, or other")
     confidence: float = Field(default=1.0, description="Confidence score from 0.0 to 1.0")
     domain: str = Field(default="in_scope", description="Whether the request is 'in_scope' or 'hard_out'")
     is_contextual: bool = Field(default=False, description="True if the message refers to previous items in the conversation")
     context_ref: Optional[str] = Field(None, description="The specific reference in context: price, availability, finish, size, specs")
     selected_product: Optional[str] = Field(None, description="The exact name of a product the user wants to buy or get details for")
+    missing_fields: List[str] = Field(default_factory=list, description="List of required fields missing from the user's query (e.g. vehicle_make)")
     attributes: VehicleAttributes = Field(default_factory=VehicleAttributes)

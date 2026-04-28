@@ -31,6 +31,23 @@ class FitmentGuard:
         "jeep": ["5x127", "5x114.3"]
     }
 
+    # Model-Specific Overrides (Granular Fitment)
+    MODEL_PATTERNS = {
+        "honda": {
+            "civic": ["5x114.3"],
+            "accord": ["5x114.3"],
+            "cr-v": ["5x114.3"],
+            "odyssey": ["5x120"],
+            "pilot": ["5x120"]
+        },
+        "tesla": {
+            "model 3": ["5x114.3"],
+            "model y": ["5x114.3"],
+            "model s": ["5x120"],
+            "model x": ["5x120"]
+        }
+    }
+
     @staticmethod
     def validate(vehicle_context, product):
         """
@@ -73,26 +90,38 @@ class FitmentGuard:
         return True
 
     @staticmethod
-    def validate_pattern(vehicle_make, product_pattern):
+    def validate_pattern(vehicle_make, product_pattern, vehicle_model=None):
         """
-        Technical verification of bolt pattern against make-specific standards.
+        Technical verification of bolt pattern against make and model standards.
         """
         if not vehicle_make or not product_pattern:
             return True # Insufficient data to reject
             
         make_low = vehicle_make.lower().strip()
+        model_low = vehicle_model.lower().strip() if vehicle_model else None
         pattern_low = product_pattern.lower().replace(" ", "")
         
-        # Resolve patterns for the make
+        # 1. Check for Model-Specific Overrides first
+        if model_low:
+            model_rules = FitmentGuard.MODEL_PATTERNS.get(make_low, {})
+            # Match sub-string (e.g. 'civic' in 'civic type r')
+            for m_key, m_patterns in model_rules.items():
+                if m_key in model_low:
+                    if any(p.lower() in pattern_low for p in m_patterns):
+                        return True
+                    else:
+                        logger.warning(f"FitmentGuard: MODEL REJECTED. {product_pattern} does not fit {vehicle_make} {vehicle_model}.")
+                        return False
+
+        # 2. Fallback to Make-level patterns
         valid_patterns = FitmentGuard.MAKE_PATTERNS.get(make_low)
         if not valid_patterns:
             return True # Make unknown to guard
             
-        # Check for direct match or partial match (e.g. '5x112' in '5x112 / 5x120')
         if any(p.lower() in pattern_low for p in valid_patterns):
             return True
             
-        logger.warning(f"FitmentGuard: BOLT PATTERN REJECTED. {product_pattern} is technically impossible for {vehicle_make}.")
+        logger.warning(f"FitmentGuard: MAKE REJECTED. {product_pattern} is impossible for {vehicle_make}.")
         return False
 
 import re # Needed for the static method

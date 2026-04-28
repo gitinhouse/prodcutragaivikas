@@ -78,15 +78,53 @@ async def recommender_node(state: GraphState):
                 "has_valid_results": False
             }
 
-    # 2. LAYER 1: Candidate Generation
-    brand_filter = entities.get("wheel_brand")
+    # 2. LAYER 1: Candidate Generation with DYNAMIC REFLECTION
+    search_entities = entities.copy()
+    
+    def _score_constraints(query: str, active_entities: dict) -> list:
+        """Dynamically weights constraints based on user urgency (lowest score relaxed first)."""
+        base_priority = {"finish": 1, "usage": 2, "style": 3, "wheel_brand": 4, "size": 5, "budget_max": 6}
+        query_lower = query.lower()
+        
+        # Elevate priority if user uses absolute language
+        strong_words = ["must", "need", "only", "specifically", "exactly", "require"]
+        if any(w in query_lower for w in strong_words):
+            if active_entities.get("finish") and str(active_entities["finish"]).lower() in query_lower:
+                base_priority["finish"] = 10 # Protect finish
+            if active_entities.get("wheel_brand") and str(active_entities["wheel_brand"]).lower() in query_lower:
+                base_priority["wheel_brand"] = 10 # Protect brand
+                
+        return sorted(base_priority.keys(), key=lambda k: base_priority[k])
+
+    RELAXATION_PRIORITY = _score_constraints(state.get("last_user_query", ""), search_entities)
+    relaxation_steps = []
+    
+    results = []
+    
+    # Initial Attempt
     results = await ProductService.get_wheels_by_fitment(
         make=make, model=model, year=year,
-        entities=entities, limit=12
+        entities=search_entities, limit=12
     )
     
-    # 2.5 BRAND FILTER (If user specified a brand)
-    if brand_filter:
+    # Reflection Loop
+    if not results:
+        for constraint in RELAXATION_PRIORITY:
+            if constraint in search_entities and search_entities[constraint]:
+                logger.info(f"Recommender: 0 results found. Relaxing constraint '{constraint}'.")
+                relaxation_steps.append(constraint)
+                search_entities[constraint] = None
+                
+                results = await ProductService.get_wheels_by_fitment(
+                    make=make, model=model, year=year,
+                    entities=search_entities, limit=12
+                )
+                if results:
+                    break
+
+    # 2.5 BRAND FILTER (If user specified a brand and we haven't relaxed it)
+    brand_filter = search_entities.get("wheel_brand")
+    if brand_filter and results:
         brand_results = [p for p in results if brand_filter.lower() in p.get("brand_name", "").lower()]
         if brand_results:
             results = brand_results
@@ -96,8 +134,9 @@ async def recommender_node(state: GraphState):
     guarded_results = [
         p for p in results 
         if FitmentGuard.validate(vehicle_context, p) and 
-           FitmentGuard.validate_pattern(make, p.get("bolt_pattern", ""))
+           FitmentGuard.validate_pattern(make, p.get("bolt_pattern", ""), vehicle_model=model)
     ]
+
     
     # 4. LAYER 3: Smart Relaxation & Filtering
     requested_size = entities.get("size")
@@ -109,6 +148,12 @@ async def recommender_node(state: GraphState):
         available_results = [p for p in guarded_results if p.get("marketing_name") not in shown_products]
     else:
         available_results = guarded_results
+        
+    # MEMORY LAYER EXCLUSION
+    rejected_products = state.get("rejected_products", [])
+    if rejected_products:
+        available_results = [p for p in available_results if p.get("marketing_name") not in rejected_products]
+        if rejected_products: logger.info(f"Recommender: Memory Layer active. Excluded rejected products.")
         
     final_results = available_results
     is_relaxed = False
@@ -139,14 +184,15 @@ async def recommender_node(state: GraphState):
                 "has_valid_results": True
             }
         
-        # Only pivot if this is truly the first attempt and we found nothing
-        logger.warning(f"Recommender: ZERO results found for {make} {model}. Forcing no_results strategy.")
+        # 5. FINAL FALLBACK: If all retries fail
+        logger.warning(f"Recommender: ZERO results found for {make} {model} even after relaxation. Forcing no_results strategy.")
         return {
             "raw_response_data": {
                 "action": "no_fitment_found",
                 "cta_intent": "no_results",
                 "total_results": 0,
-                "shown_results": 0
+                "shown_results": 0,
+                "relaxation_steps": relaxation_steps
             },
             "cta_intent": "no_results",
             "has_valid_results": False
@@ -160,8 +206,8 @@ async def recommender_node(state: GraphState):
             "marketing_name": p.get("marketing_name"),
             "price": p.get("price"),
             "stock": p.get("stock", 0),
-            "finish": p.get("finish") or "Premium",
-            "bolt_pattern": p.get("bolt_pattern") or "Verified",
+            "finish": p.get("finish"),
+            "bolt_pattern": p.get("bolt_pattern"),
             "ai_reason": reasons[i % 4] if not is_relaxed else f"Compatible {make} fitment"
         })
 
@@ -177,6 +223,7 @@ async def recommender_node(state: GraphState):
             "total_results": total_found,
             "shown_results": len(trimmed_products),
             "is_relaxed_search": is_relaxed,
+            "relaxation_steps": relaxation_steps,
             "is_new_recommendation": is_new_search, # Help synthesizer distinguish
             "allow_lead_capture": (sales_stage == "closing" or cta_intent == "offer_quote")
         },

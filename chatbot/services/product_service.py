@@ -8,7 +8,7 @@ from pgvector.django import CosineDistance
 from chatbot.models import Product, Brand, Category, Fitment
 from .cache_service import CacheService
 
-# 🔥 MASTER LOGGER FOR TRACEABILITY
+# MASTER LOGGER FOR TRACEABILITY
 logger = logging.getLogger("chatbot.services.product")
 
 class ProductService:
@@ -33,10 +33,9 @@ class ProductService:
             "name": p.name,
             "brand_name": p.brand.name,
             "marketing_name": f"{p.brand.name} {p.name}",
-            "price": float(p.price),
+            "price": float(p.price) if p.price is not None else None,
             "stock": p.stock,
             "part_number": p.part_number,
-            "stock": p.stock,
             "finish": p.finish,
             "bolt_pattern": p.bolt_pattern,
             "diameter": p.diameter,
@@ -121,6 +120,20 @@ class ProductService:
             finish = entities.get("finish")
             if finish: queryset = queryset.filter(Q(finish__icontains=finish) | Q(searchable_text__icontains=finish))
 
+            # Apply brand filter to the existing queryset instead of returning early
+            wheel_brand = entities.get("wheel_brand") or entities.get("brand")
+            
+            # Fallback: check query_text for known wheel brands if LLM missed it
+            if not wheel_brand:
+                known_brands = ["bbs", "vossen", "fuel", "rohana", "tsw", "dirty life", "method", "american", "black rhino", "kmc", "niche", "rotiform", "savini", "hostile", "moto metal", "xd", "asanti"]
+                for b in known_brands:
+                    if b in query_text.lower():
+                        wheel_brand = b
+                        break
+
+            if wheel_brand:
+                queryset = queryset.filter(brand__name__icontains=wheel_brand)
+                
             usage = entities.get("usage") or entities.get("style", "")
             v_type = entities.get("vehicle_type")
             
@@ -137,8 +150,8 @@ class ProductService:
             else: queryset = queryset.order_by('price')
 
             results = list(queryset.exclude(embedding__isnull=True)[:limit])
-            if len(results) >= 2: return results
-
+            if len(results) >= 1: return results
+            
             if query_vector:
                 results = list(Product.objects.select_related('brand').exclude(embedding__isnull=True).annotate(distance=CosineDistance("embedding", query_vector)).order_by("distance")[:limit])
                 if results: return results
@@ -154,6 +167,7 @@ class ProductService:
     async def get_wheels_by_fitment(
         make: str, model: str, year: Optional[int] = None, 
         entities: Optional[Dict[str, Any]] = None,
+        exclude_ids: Optional[List[str]] = None,
         limit: int = 12
     ) -> List[Dict[str, Any]]:
         def _execute():
@@ -175,6 +189,9 @@ class ProductService:
             fitments = Fitment.objects.select_related('product', 'product__brand').filter(query)
             product_ids = fitments.values_list('product_id', flat=True).distinct()
             base_queryset = Product.objects.select_related('brand').filter(id__in=product_ids)
+            
+            if exclude_ids:
+                base_queryset = base_queryset.exclude(id__in=exclude_ids)
             
             # 2. Refined Search (Style/Budget)
             refined_queryset = base_queryset

@@ -6,8 +6,8 @@ logger = logging.getLogger("chatbot.nodes.lead_evaluator")
 
 async def lead_evaluator_node(state: GraphState):
     """
-    STRATEGY ENGINE: The Master Strategist.
-    Decides the technical 'cta_intent' based on Sales Stage, Intent, and Engagement.
+    STRATEGY ENGINE: The Decision Node (Elite Layer).
+    Evaluates Action Node results and applies advanced Sales Intelligence.
     """
     intent = state.get("intent")
     intent_str = str(intent.value if hasattr(intent, "value") else intent).lower()
@@ -34,7 +34,7 @@ async def lead_evaluator_node(state: GraphState):
     # --- RULE: RESPECT CONTROLLER'S DECISION (UNLESS ACTION FAILED) ---
     # If the Controller set show_options but Recommender found nothing, we MUST pivot.
     controller_intent = state.get("cta_intent", "")
-    PASS_THROUGH_INTENTS = ["show_options", "ask_lead_info", "redirect_to_domain", "clarify", "recovery", "final_thank_you", "ask_vehicle", "no_results"]
+    PASS_THROUGH_INTENTS = ["show_options", "ask_lead_info", "redirect_to_domain", "clarify", "recovery", "final_thank_you", "ask_vehicle", "no_results", "fitment_summary", "brand_inquiry", "product_detail", "info", "greeting"]
     
     if controller_intent in PASS_THROUGH_INTENTS and action_type != "no_fitment_found":
         logger.info(f"Lead Evaluator: Passing through Controller strategy '{controller_intent}'.")
@@ -62,12 +62,17 @@ async def lead_evaluator_node(state: GraphState):
         else:
             cta_intent = "show_options"
 
-    # D. GUIDED DISCOVERY (vehicle known, show products)
+    # D. DECISION NODE: Advanced Sales Intelligence
     elif user_stage in ["guided_discovery", "recommend", "partial_recommend", "recommendation", "fitment"]:
+        total_results = raw_data.get("total_results", 0)
+        
         if has_price_intent:
             cta_intent = "offer_quote"
         elif has_hesitation:
-            cta_intent = "handle_objection"
+            cta_intent = "reduce_friction"
+        elif total_results > 3 and action_type == "recommend":
+            logger.info("Decision Node: High results volume detected. Triggering comparison upsell.")
+            cta_intent = "suggest_comparison"
         else:
             cta_intent = "show_options"
 

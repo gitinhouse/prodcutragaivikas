@@ -149,9 +149,12 @@ class StateManager:
             return "recommend" if has_vehicle else "discovery"
 
         # 2. INTENT OVERRIDE: If they want to search/browse
-        if current_intent in ["product_search", "show_more_options", "greeting"]:
+        if current_intent in ["product_search", "show_more_options", "greeting", "fitment_lookup", "recommendation", "fitment_check"]:
+            # If they explicitly want more/different options, clear the 'resolved' purchase target
+            if current_intent == "show_more_options":
+                state["resolved_product"] = None
+                
             # ONLY RESET IF VEHICLE IS NEW OR MISSING
-            # This preserves preferences (like color/style) during confirmation turns
             if not state.get("vehicle_locked"):
                 logger.info("StateManager: New/Unconfirmed vehicle context. Resetting results.")
                 state["resolved_product"] = None
