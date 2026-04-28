@@ -24,6 +24,7 @@ class Brand(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100, unique=True, db_index=True)
     website = models.URLField(blank=True, null=True)
+    is_wheel_brand = models.BooleanField(default=False, db_index=True, help_text="Flags this brand as a known wheel manufacturer")
 
     def __str__(self):
         return self.name
@@ -118,6 +119,43 @@ class Fitment(models.Model):
 
     def __str__(self):
         return f"{self.make} {self.model} ({self.year_from}-{self.year_to}) -> {self.product.name}"
+
+class VehicleTypeLimit(models.Model):
+    """
+    Physical constraints (max diameter/width) by vehicle type (e.g. sedan, suv).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vehicle_type = models.CharField(max_length=50, unique=True, db_index=True, help_text="e.g. sedan, suv, truck")
+    max_diameter = models.FloatField(help_text="Maximum allowed wheel diameter in inches")
+    max_width = models.FloatField(help_text="Maximum allowed wheel width in inches")
+    
+    class Meta:
+        verbose_name = "Vehicle Type Limit"
+        verbose_name_plural = "Vehicle Type Limits"
+
+    def __str__(self):
+        return f"{self.vehicle_type} (Max D: {self.max_diameter}, Max W: {self.max_width})"
+
+class BoltPatternRule(models.Model):
+    """
+    Bolt Pattern mappings for Make and optionally Model.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    make = models.CharField(max_length=100, db_index=True, help_text="Vehicle Make (e.g. ford, honda)")
+    model = models.CharField(max_length=100, blank=True, null=True, db_index=True, help_text="Optional Vehicle Model (e.g. f-150)")
+    patterns = models.JSONField(help_text="List of valid bolt patterns e.g. [\"5x114.3\", \"6x135\"]")
+
+    class Meta:
+        verbose_name = "Bolt Pattern Rule"
+        verbose_name_plural = "Bolt Pattern Rules"
+        constraints = [
+            models.UniqueConstraint(fields=['make', 'model'], name='unique_make_model_rule')
+        ]
+
+    def __str__(self):
+        if self.model:
+            return f"{self.make} {self.model} -> {self.patterns}"
+        return f"{self.make} (Default) -> {self.patterns}"
 
 class Lead(models.Model):
     """

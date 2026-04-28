@@ -24,23 +24,24 @@ class GraphState(MessagesState):
     
     # --- SHOPPING CONTEXT (The pillars) ---
     extracted_entities: Dict[str, Any] # brand, size, style, budget_max, vehicle_type
+    active_filters: Dict[str, Any] # size, finish, style (Persists during session)
     wheel_size: Optional[str]
     budget: Optional[float]
     style: Optional[str]
     
-    # --- SYSTEM CONTROL ---
-    intent: str # Using string for easier JSON handling
+    # --- SYSTEM CONTROL (The Engine) ---
+    phase: str # VEHICLE_COLLECTION, READY_FOR_SEARCH, BROWSING, PURCHASE
+    intent: str 
+    signal_type: str # ACKNOWLEDGEMENT, CORRECTION, EXPLICIT_INTENT, RESET
     domain: str # in_scope, soft_out, hard_out
-    sales_stage: str # discovery, guided_discovery, partial_recommend, recommend, closing
-    action_type: str # The physical node to route to: recommend, discovery, info, hard_block
-    cta_intent: str # The tactical play
-    confidence_score: float # LLM confidence (0.0 - 1.0)
-    category: str # Normalized product category: wheels, tires, other
-    is_contextual: bool # True if user is referencing something from prior context
-    context_ref: Optional[str] # What specifically user is asking about: price, availability, etc.
-    context_payload: Dict[str, Any] # Structured context for downstream nodes
+    sales_stage: str # discovery, fitment, recommendation, closing
+    action_type: str # recommend, discovery, info, hard_block
+    cta_intent: str # tactical play
+    debug_info: Dict[str, Any] # explainability layer
     
     # --- UX & FLOW CONTROL ---
+    view_count: int
+    loop_count: int
     is_follow_up: bool
     pivot_count: int
     muzzle_response: bool
@@ -50,6 +51,7 @@ class GraphState(MessagesState):
     raw_response_data: Dict[str, Any] # Products, reasons, flags
     recommended_products: List[str] # Names of shown products
     shown_products: List[str] # Persistence list to avoid repeats
+    rejected_products: List[str] # Products user specifically disliked
     has_valid_results: bool # True if recommender found matches
     resolved_product: Optional[str] # Currently discussed product
     customer_name: Optional[str] # Captured lead name

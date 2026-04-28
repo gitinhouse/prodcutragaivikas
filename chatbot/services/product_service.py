@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any, Union
 from django.db.models import Q, Case, When, Value, FloatField
 from asgiref.sync import sync_to_async
 from pgvector.django import CosineDistance
+from chatbot.helpers.config_cache import ConfigCache
 from chatbot.models import Product, Brand, Category, Fitment
 from .cache_service import CacheService
 
@@ -90,7 +91,9 @@ class ProductService:
         exclude_ids: Optional[List[str]] = None,
         limit: int = 4
     ) -> List[Dict[str, Any]]:
-        def _execute_search_logic():
+        known_brands = await ConfigCache.get_wheel_brands()
+        
+        def _execute_search_logic(known_brands):
             sku_candidate = ProductService._extract_sku_candidate(query_text) or ProductService._extract_sku_candidate(entities.get("brand", ""))
             if sku_candidate:
                 sku_match = Product.objects.select_related('brand').filter(
@@ -125,9 +128,8 @@ class ProductService:
             
             # Fallback: check query_text for known wheel brands if LLM missed it
             if not wheel_brand:
-                known_brands = ["bbs", "vossen", "fuel", "rohana", "tsw", "dirty life", "method", "american", "black rhino", "kmc", "niche", "rotiform", "savini", "hostile", "moto metal", "xd", "asanti"]
                 for b in known_brands:
-                    if b in query_text.lower():
+                    if b.lower() in query_text.lower():
                         wheel_brand = b
                         break
 
@@ -160,8 +162,53 @@ class ProductService:
             results = list(Product.objects.select_related('brand').filter(Q(name__icontains=clean_query) | Q(searchable_text__icontains=clean_query)).order_by('?')[:limit])
             return results
 
-        raw_results = await sync_to_async(_execute_search_logic, thread_sensitive=False)()
+        raw_results = await sync_to_async(_execute_search_logic, thread_sensitive=False)(known_brands)
         return [ProductService._serialize_product(p) for p in raw_results]
+
+    @staticmethod
+    async def search_products(
+        vehicle_context: Dict[str, Any],
+        filters: Dict[str, Any],
+        exclude: Optional[List[str]] = None,
+        limit: int = 5
+    ) -> Dict[str, Any]:
+        """
+        HIGH-LEVEL SEARCH API: Fitment-First, Filter-Second.
+        """
+        make = vehicle_context.get("make")
+        model = vehicle_context.get("model")
+        year = vehicle_context.get("year")
+        
+        relaxation_steps = []
+        
+        # 1. BASE FITMENT FETCH
+        # If we have vehicle info, use it as a hard constraint
+        if make and model:
+            products = await ProductService.get_wheels_by_fitment(
+                make=make, model=model, year=year,
+                entities=filters, limit=limit
+            )
+            # Check if any filtering happened inside get_wheels_by_fitment
+            # (Note: get_wheels_by_fitment already does some internal relaxation)
+            return {
+                "products": products,
+                "total_results": len(products),
+                "validation_status": "fitment_verified",
+                "relaxation_steps": relaxation_steps
+            }
+        
+        # 2. UNIVERSAL SEARCH (If no vehicle)
+        products = await ProductService.universal_search(
+            query_text=filters.get("style", "premium wheels"),
+            entities=filters,
+            limit=limit
+        )
+        return {
+            "products": products,
+            "total_results": len(products),
+            "validation_status": "generic_search",
+            "relaxation_steps": relaxation_steps
+        }
 
     @staticmethod
     async def get_wheels_by_fitment(
@@ -176,25 +223,44 @@ class ProductService:
             clean_model = model.replace("-", "").replace(" ", "").lower()
             
             # 2. Base Fitment Set
-            # Use icontains or a list of variations for the model
             query = Q(make__iexact=make)
-            if clean_model == "f150":
-                query &= Q(model__icontains="f-150") | Q(model__icontains="f150")
-            else:
-                query &= Q(model__iexact=model)
-                
             if year is not None:
                 query &= Q(year_from__lte=year, year_to__gte=year)
-                
-            fitments = Fitment.objects.select_related('product', 'product__brand').filter(query)
+
+            # Try exact model match first
+            exact_query = query & Q(model__iexact=model)
+            fitments = Fitment.objects.select_related('product', 'product__brand').filter(exact_query)
+            
+            if not fitments.exists():
+                # Fallback to flexible matching
+                if clean_model == "f150":
+                    flex_query = query & (Q(model__icontains="f-150") | Q(model__icontains="f150"))
+                else:
+                    flex_query = query & Q(model__icontains=model)
+                fitments = Fitment.objects.select_related('product', 'product__brand').filter(flex_query)
+            
             product_ids = fitments.values_list('product_id', flat=True).distinct()
             base_queryset = Product.objects.select_related('brand').filter(id__in=product_ids)
             
             if exclude_ids:
                 base_queryset = base_queryset.exclude(id__in=exclude_ids)
-            
+
+            # --- PESSIMISTIC TECHNICAL FIREWALL: Bolt Pattern Lock ---
+            valid_patterns = ConfigCache.get_patterns_sync(make, model)
+            if valid_patterns:
+                pattern_query = Q()
+                for p in valid_patterns:
+                    # Strict pattern matching to prevent 5x120 leaking into 5x114.3
+                    pattern_query |= Q(bolt_pattern__iexact=p) | Q(bolt_pattern__icontains=f" {p}") | Q(bolt_pattern__istartswith=f"{p},")
+                
+                base_queryset = base_queryset.filter(pattern_query)
+                logger.info(f"ProductService: Technical Firewall active for {make} {model}. Patterns: {valid_patterns}")
+            else:
+                logger.warning(f"ProductService: NO VALID PATTERNS FOUND for {make} {model}. Using base fitment with caution.")
+
             # 2. Refined Search (Style/Budget)
             refined_queryset = base_queryset
+            
             if entities:
                 price_max = entities.get("budget_max") or entities.get("price_max")
                 if price_max:

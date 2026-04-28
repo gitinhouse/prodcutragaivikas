@@ -6,92 +6,89 @@ logger = logging.getLogger("chatbot.nodes.lead_evaluator")
 
 async def lead_evaluator_node(state: GraphState):
     """
-    STRATEGY ENGINE: The Decision Node (Elite Layer).
-    Evaluates Action Node results and applies advanced Sales Intelligence.
+    THE NBA ENGINE V8: Deterministic Strategic Authority.
+    Decides the 'Next Best Action' based on Phase, State Gaps, and Business Goals.
     """
-    intent = state.get("intent")
-    intent_str = str(intent.value if hasattr(intent, "value") else intent).lower()
-    user_query = state.get("last_user_query", "").lower()
-    user_stage = state.get("sales_stage", "discovery")
-    domain = state.get("domain", "in_scope")
+    # 0. INGRESS & STATE VALIDATION
+    phase = state.get("phase", "VEHICLE_COLLECTION")
+    intent = state.get("intent", "product_search")
+    signal_type = state.get("signal_type", "EXPLICIT_INTENT")
     raw_data = state.get("raw_response_data", {})
     action_type = raw_data.get("action", "discovery")
     
-    vehicle_context = state.get("vehicle_context", {})
-    entities = state.get("extracted_entities", {})
-    has_email = bool(state.get("customer_email") or state.get("has_email", False))
-    history = state.get("advisor_history", [])
-
-    logger.info(f"Lead Evaluator: Analyzing Strategy (Stage={user_stage}, Intent={intent_str})")
-
-    # --- 1. SIGNAL DETECTION ---
-    is_engaged = any(k in user_query for k in ["show", "options", "what do you have", "recommend", "looking", "rims", "wheels", "list"])
-    has_price_intent = any(k in user_query for k in ["price", "cost", "how much", "total", "quote", "pricing"])
-    has_hesitation = intent_str == "hesitant" or any(k in user_query for k in ["expensive", "too much", "high", "cheaper"])
-    is_buying = intent_str == "purchase_intent" or any(k in user_query for k in ["buy", "order", "take it", "checkout"])
-
-    # --- 2. THE STRATEGY MATRIX ---
-    # --- RULE: RESPECT CONTROLLER'S DECISION (UNLESS ACTION FAILED) ---
-    # If the Controller set show_options but Recommender found nothing, we MUST pivot.
-    controller_intent = state.get("cta_intent", "")
-    PASS_THROUGH_INTENTS = ["show_options", "ask_lead_info", "redirect_to_domain", "clarify", "recovery", "final_thank_you", "ask_vehicle", "no_results", "fitment_summary", "brand_inquiry", "product_detail", "info", "greeting"]
+    view_count = state.get("view_count", 0)
+    loop_count = state.get("loop_count", 0)
+    last_action = state.get("last_action", "")
     
-    if controller_intent in PASS_THROUGH_INTENTS and action_type != "no_fitment_found":
-        logger.info(f"Lead Evaluator: Passing through Controller strategy '{controller_intent}'.")
-        raw_data["allow_lead_capture"] = (controller_intent == "ask_lead_info")
-        raw_data["cta_intent"] = controller_intent
-        return {"cta_intent": controller_intent, "raw_response_data": raw_data}
+    debug_info = {
+        "phase": phase,
+        "intent": intent,
+        "signal": signal_type,
+        "reason": "Standard Phase Progression"
+    }
 
-    cta_intent = "ask_vehicle"  # Default fallback only if controller gave nothing useful
+    # 1. PRIORITY LEVEL 1: CRITICAL SIGNAL OVERRIDES
+    if signal_type == "RESET":
+        debug_info["reason"] = "User requested hard reset."
+        return {"cta_intent": "greeting", "raw_response_data": {"action": "reset"}, "debug_info": debug_info}
 
-    # A. DOMAIN PROTECTION
-    if domain == "hard_out":
-        cta_intent = "redirect_to_domain"
-
-    # B. NO FITMENT FOUND
-    elif action_type == "no_fitment_found":
-        if not vehicle_context.get("year"):
-            cta_intent = "ask_vehicle"
-        else:
-            cta_intent = "no_results"
-
-    # C. PURE DISCOVERY (no vehicle at all)
-    elif user_stage == "discovery":
-        if not (vehicle_context.get("make") and vehicle_context.get("model") and vehicle_context.get("year")):
-            cta_intent = "ask_vehicle"
-        else:
-            cta_intent = "show_options"
-
-    # D. DECISION NODE: Advanced Sales Intelligence
-    elif user_stage in ["guided_discovery", "recommend", "partial_recommend", "recommendation", "fitment"]:
-        total_results = raw_data.get("total_results", 0)
+    # 2. PRIORITY LEVEL 2: CONVERSION LOCKDOWN (Soft Lockdown)
+    if phase == "PURCHASE":
+        # Allow questions/clarifications but redirect back to the deal
+        if intent in ["product_detail", "info_request", "brand_inquiry"]:
+            debug_info["reason"] = "Soft lockdown: Answer question then redirect to checkout."
+            raw_data["cta_intent"] = "answer_and_close"
+            return {"cta_intent": "answer_and_close", "raw_response_data": raw_data, "debug_info": debug_info}
         
-        if has_price_intent:
-            cta_intent = "offer_quote"
-        elif has_hesitation:
-            cta_intent = "reduce_friction"
-        elif total_results > 3 and action_type == "recommend":
-            logger.info("Decision Node: High results volume detected. Triggering comparison upsell.")
-            cta_intent = "suggest_comparison"
+        debug_info["reason"] = "High intent detected. Lockdown to closing actions."
+        cta = "confirm_order_on_file" if state.get("has_email") else "ask_lead_info"
+        return {"cta_intent": cta, "raw_response_data": raw_data, "debug_info": debug_info}
+
+    # 3. PRIORITY LEVEL 3: LOOP DETECTION & FATIGUE
+    # Semantic Loop Break: If user keeps saying "show more" or "anything else"
+    if loop_count >= 2 and intent != "product_detail":
+        debug_info["reason"] = "Fatigue detected. Breaking loop with Top Picks."
+        return {"cta_intent": "break_loop_with_guidance", "raw_response_data": raw_data, "debug_info": debug_info}
+
+    # 4. PRIORITY LEVEL 4: PHASE-BASED NBA
+    cta_intent = "ask_vehicle"
+
+    if phase == "VEHICLE_COLLECTION":
+        cta_intent = "ask_vehicle"
+        debug_info["reason"] = "Phase: Missing vehicle data."
+
+    elif phase == "READY_FOR_SEARCH":
+        # If we have vehicle but haven't shown results
+        cta_intent = "show_options"
+        debug_info["reason"] = "Phase: Vehicle complete, moving to search."
+
+    elif phase == "BROWSING":
+        # Intelligent Browser Nudges
+        if view_count > 3:
+            cta_intent = "recommend_top_pick"
+            debug_info["reason"] = "Browse fatigue: Suggesting top match."
+        elif signal_type == "ACKNOWLEDGEMENT" and last_action == "recommendation":
+             cta_intent = "suggest_comparison"
+             debug_info["reason"] = "User acknowledged results. Offering comparison."
         else:
             cta_intent = "show_options"
+            debug_info["reason"] = "Standard browsing."
 
-    # E. CLOSING
-    elif user_stage == "closing" or is_buying:
-        if has_email:
-            cta_intent = "close"
-        else:
-            cta_intent = "ask_lead_info"
+    # 5. SAFETY FALLBACK (The Net)
+    if not cta_intent or (phase == "VEHICLE_COLLECTION" and action_type == "recommend"):
+        logger.warning("NBA Engine: Inconsistent state detected. Triggering safe fallback.")
+        cta_intent = "safe_fallback"
+        debug_info["reason"] = "Safety Fallback triggered."
 
-    # --- LEAD CAPTURE PERMISSION ---
-    allow_lead = cta_intent in ["offer_quote", "soft_close", "close", "ask_lead_info"]
+    # 6. RE-ENGAGEMENT HOOK
+    if last_action == "recovery" and phase != "VEHICLE_COLLECTION":
+        raw_data["apply_reengagement"] = True
 
-    logger.info(f"Lead Evaluator FINAL Strategy: '{cta_intent}' (AllowLead={allow_lead})")
-
-    raw_data["allow_lead_capture"] = allow_lead
     raw_data["cta_intent"] = cta_intent
+    logger.info(f"NBA Engine Final Choice: '{cta_intent}' | Reason: {debug_info['reason']}")
 
     return {
         "cta_intent": cta_intent,
-        "raw_response_data": raw_data
+        "raw_response_data": raw_data,
+        "debug_info": debug_info
     }

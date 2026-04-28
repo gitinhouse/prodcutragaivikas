@@ -1,183 +1,152 @@
 import logging
 import re
-from chatbot.helpers.validator import validate_state, debug_log
+from chatbot.helpers.config_cache import ConfigCache
 
 logger = logging.getLogger("chatbot.helpers.state_manager")
 
 class StateManager:
     """
-    THE STATE AUTHORITY V6: Logical Progression Engine.
-    Ensures the user MUST see products before entering the closing stage.
+    THE DETERMINISTIC DECISION ENGINE V7.
+    Derives Phase from State and manages Surgical Memory Resets.
     """
 
-    STYLE_MAP = {
-        "daily use": "balanced",
-        "sporty": "performance",
-        "rugged": "offroad",
-        "luxury": "luxury"
+    PHASES = {
+        "VEHICLE_COLLECTION": "discovery",
+        "READY_FOR_SEARCH": "fitment",
+        "BROWSING": "recommendation",
+        "PURCHASE": "closing"
     }
 
-    CATEGORY_MAP = {
-        "rim": "wheels",
-        "rims": "wheels",
-        "wheel": "wheels",
-        "wheels": "wheels",
-        "tire": "tires",
-        "tyre": "tires"
-    }
+    CORE_FIELDS = ["vehicle_context", "budget_max", "wheel_brand"]
+    SESSION_FIELDS = ["shown_products", "resolved_product", "active_filters", "view_count", "loop_count"]
+    
+    @staticmethod
+    def resolve_phase(state):
+        """
+        DERIVED PHASE RESOLVER: The source of truth for conversation progress.
+        """
+        vc = state.get("vehicle_context", {})
+        vehicle_complete = bool(vc.get("year") and vc.get("make") and vc.get("model"))
+        results_shown = len(state.get("shown_products", [])) > 0
+        checkout_started = state.get("cta_intent") in ["ask_lead_info", "confirm_order_on_file", "close"]
+        email_captured = bool(state.get("customer_email") or state.get("has_email"))
+
+        if not vehicle_complete:
+            return "VEHICLE_COLLECTION"
+        if not results_shown:
+            return "READY_FOR_SEARCH"
+        if not (checkout_started or email_captured):
+            return "BROWSING"
+        return "PURCHASE"
 
     @staticmethod
-    def process_state(current_state, new_entities, query):
-        # 1. CATEGORY NORMALIZATION
-        new_intent = new_entities.get("intent", current_state.get("intent"))
-        raw_cat = new_entities.get("category", "wheels")
-        if "wheel" in query.lower() or "rim" in query.lower():
-            raw_cat = "wheels"
+    async def process_state(state, new_entities, query):
+        """
+        Main entry point for state updates.
+        """
+        # 0. VALIDATE INGRESS
+        if state is None: return {}
         
-        # 2. DELTA CONSTRUCTION
-        updates = {
-            "category": StateManager.CATEGORY_MAP.get(raw_cat.lower(), "wheels")
-        }
-        
-        # 3. MERGE & RESOLVE
-        merge_updates = StateManager.merge_and_resolve(current_state, new_entities)
-        updates.update(merge_updates)
-        
-        # 4. CONTEXTUAL FOLLOW-UP
-        updates["is_follow_up"] = StateManager.detect_follow_up({**current_state, **updates}, query)
-        
-        # 5. STAGE CALCULATION
-        updates["sales_stage"] = StateManager.calculate_stage({**current_state, **updates}, new_intent)
-        
-        # 6. ENFORCE BUSINESS TRUTH (Return only the changes)
-        return updates
-
-    @staticmethod
-    def merge_and_resolve(state, new_entities):
-        updates = {}
-        vc = state.get("vehicle_context", {}).copy()
-        entities = state.get("extracted_entities", {}).copy()
         attrs = new_entities.get("attributes", {})
+        intent = new_entities.get("intent", "product_search")
         
-        new_make = attrs.get("vehicle_make")
-        new_model = attrs.get("vehicle_model")
-        old_make = vc.get("make")
+        # 1. DETECT CORRECTIONS (Confidence Layer)
+        is_correction = await StateManager._is_confirmed_correction(state, attrs, intent)
         
-        # WHEEL BRAND SHIELD: Don't reset if "new_make" is actually a wheel brand
-        WHEEL_BRANDS = ["bbs", "vossen", "fuel", "rohana", "tsw", "dirty life", "method", "american"]
-        is_wheel_brand = new_make and new_make.lower() in WHEEL_BRANDS
+        # 2. APPLY MEMORY TIERS & SURGICAL RESETS
+        updates = {}
+        if is_correction or new_entities.get("signal_type") == "RESET":
+            # For Nuclear Pivots (RESET), we pass empty attrs to force a clean slate
+            updates = await StateManager._handle_surgical_reset(state, attrs)
+        else:
+            updates = await StateManager._handle_standard_update(state, attrs)
 
-        # VEHICLE BRAND VALIDATION: Only reset if the new_make is a KNOWN automotive brand
-        KNOWN_CARS = ["honda", "bmw", "audi", "mercedes", "ford", "chevy", "chevrolet", "toyota", "nissan", "jeep", "dodge", "ram", "subaru", "lexus", "hyundai", "kia", "volkswagen", "porsche", "tesla", "gmc", "cadillac", "mazda", "maruti", "suzuki", "tata", "mahindra", "hyundai", "kia"]
-        is_valid_car = new_make and new_make.lower() in KNOWN_CARS
+        # 3. FILTER PERSISTENCE & CONFLICT RESOLUTION
+        current_filters = state.get("active_filters", {})
         
-        # RESET IF MAKE CHANGES (Even without model) - Guarded by Wheel Shield and Car Validation
-        if new_make and old_make and new_make.lower() != old_make.lower() and not is_wheel_brand and is_valid_car:
-            logger.info(f"StateManager: Make changed from {old_make} to {new_make}. Resetting context.")
-            updates["extracted_entities"] = {}
-            updates["shown_products"] = []
-            updates["wheel_size"] = None
-            updates["resolved_product"] = None
-            updates["sales_stage"] = "discovery"
-            vc = {}
-            entities = {}
-        
-        # RESET IF FULL NEW CAR PROVIDED (Guarded by Wheel Brand Shield)
-        elif new_make and new_model and not is_wheel_brand:
-            old_car = f"{vc.get('make','')}{vc.get('model','')}".lower()
-            new_car = f"{new_make}{new_model}".lower()
-            if old_car and old_car != new_car:
-                logger.info("StateManager: Vehicle change detected. Triggering Nuclear Reset.")
-                updates["extracted_entities"] = {}
-                updates["shown_products"] = []
-                updates["wheel_size"] = None
-                updates["resolved_product"] = None
-                updates["sales_stage"] = "discovery"
-                vc = {}
-                entities = {}
+        # Reset Logic: If 'all' or 'any' was detected, clear the sticky filters
+        if new_entities.get("reset_filters"):
+            logger.info("StateManager: Clearing persistent filters for broad search.")
+            current_filters = {}
 
-        for key, attr_key in {"year": "vehicle_year", "make": "vehicle_make", "model": "vehicle_model"}.items():
-            if attrs.get(attr_key):
-                vc[key] = attrs[attr_key]
+        new_filters = {
+            "size": attrs.get("size"),
+            "finish": attrs.get("finish"),
+            "style": attrs.get("style") or attrs.get("usage")
+        }
+        # Merge logic: New overrides old if present
+        merged_filters = {k: v for k, v in current_filters.items()}
+        for k, v in new_filters.items():
+            if v: merged_filters[k] = v
         
-        updates["vehicle_context"] = vc
-        # MANDATORY VALIDATION: Locked only if we have Year, Make, and Model to ensure fitment precision
-        updates["vehicle_locked"] = bool(vc.get("year") and vc.get("make") and vc.get("model"))
+        updates["active_filters"] = merged_filters
 
-        if attrs.get("size"):
-            updates["wheel_size"] = attrs["size"]
-            
-        if attrs.get("wheel_brand"):
-            updates["wheel_brand"] = attrs["wheel_brand"]
-            
-        if attrs.get("budget_max"):
-            updates["budget_max"] = attrs["budget_max"]
-            
-        entities.update({
-            "size": updates.get("wheel_size", state.get("wheel_size")),
-            "wheel_brand": updates.get("wheel_brand", state.get("wheel_brand")),
-            "budget_max": updates.get("budget_max", state.get("budget_max")),
-            "vehicle_make": vc.get("make"),
-            "vehicle_model": vc.get("model")
-        })
-        updates["extracted_entities"] = entities
+        # 4. DERIVE PHASE & PROGRESS
+        temp_state = {**state, **updates}
+        updates["phase"] = StateManager.resolve_phase(temp_state)
+        updates["sales_stage"] = StateManager.PHASES.get(updates["phase"], "discovery")
+
+        # 5. LOOP & VIEW TRACKING
+        if intent == "show_more_options" or "more" in query.lower():
+            updates["loop_count"] = state.get("loop_count", 0) + 1
+        
         return updates
 
     @staticmethod
-    def detect_follow_up(state, query):
-        words = query.lower().split()
-        confirmation_words = ["ok", "sure", "yes", "yeah", "yep", "good", "great"]
-        is_confirm = any(w in words for w in confirmation_words) and len(words) <= 3
-        has_context = state.get("vehicle_locked") or state.get("wheel_size")
-        return is_confirm and has_context
+    async def _is_confirmed_correction(state, attrs, intent):
+        """
+        Confidence + Pattern detection for corrections.
+        """
+        new_make = attrs.get("vehicle_make")
+        old_make = state.get("vehicle_context", {}).get("make")
+        
+        if not new_make or not old_make: return False
+        if new_make.lower() == old_make.lower(): return False
+        
+        # Check if it's a known car make (Security Guard)
+        is_valid_car = await ConfigCache.is_known_make(new_make)
+        if not is_valid_car: return False
+        
+        # Check if it's actually a wheel brand (Security Guard)
+        wheel_brands = await ConfigCache.get_wheel_brands()
+        if new_make.lower() in [b.lower() for b in wheel_brands]: return False
+        
+        return True
 
     @staticmethod
-    def calculate_stage(state, current_intent):
+    async def _handle_surgical_reset(state, attrs):
         """
-        STRICT PROGRESSION: Discovery -> Recommendation -> Closing.
+        Resets SESSION memory but protects CORE context.
         """
-        has_vehicle = state.get("vehicle_locked")
-        has_pref = bool(state.get("wheel_size"))
-        resolved_product = state.get("resolved_product")
+        logger.info("StateManager: Surgical Reset Triggered (Vehicle Correction).")
+        vc = {} # Clear vehicle for correction
+        for key, attr_key in {"year": "vehicle_year", "make": "vehicle_make", "model": "vehicle_model"}.items():
+            if attrs.get(attr_key): vc[key] = attrs[attr_key]
+            
+        return {
+            "vehicle_context": vc,
+            "vehicle_locked": bool(vc.get("year") and vc.get("make") and vc.get("model")),
+            "shown_products": [],
+            "resolved_product": None,
+            "view_count": 0,
+            "loop_count": 0,
+            "active_filters": {k: v for k, v in state.get("active_filters", {}).items() if k in ["style", "finish"]}
+        }
+
+    @staticmethod
+    async def _handle_standard_update(state, attrs):
+        """
+        Sticky Context: Merges new attributes without losing old ones.
+        """
+        vc = (state.get("vehicle_context") or {}).copy()
         
-        # --- INVARIANTS & RESET RULES ---
-        shown_products = state.get("shown_products", [])
-
-        # 1. NO PRODUCTS = NO CLOSING
-        if not shown_products and (state.get("sales_stage") == "closing" or current_intent == "purchase_intent"):
-            logger.warning("StateManager: Closing stage blocked - no products shown yet.")
-            return "recommend" if has_vehicle else "discovery"
-
-        # 2. INTENT OVERRIDE: If they want to search/browse
-        if current_intent in ["product_search", "show_more_options", "greeting", "fitment_lookup", "recommendation", "fitment_check"]:
-            # If they explicitly want more/different options, clear the 'resolved' purchase target
-            if current_intent == "show_more_options":
-                state["resolved_product"] = None
-                
-            # ONLY RESET IF VEHICLE IS NEW OR MISSING
-            if not state.get("vehicle_locked"):
-                logger.info("StateManager: New/Unconfirmed vehicle context. Resetting results.")
-                state["resolved_product"] = None
-                state["shown_products"] = []
+        # Merge logic: Only overwrite if the new value is NOT None/empty
+        if attrs.get("vehicle_year"): vc["year"] = attrs["vehicle_year"]
+        if attrs.get("vehicle_make"): vc["make"] = attrs["vehicle_make"]
+        if attrs.get("vehicle_model"): vc["model"] = attrs["vehicle_model"]
             
-            if has_vehicle and has_pref: return "recommend"
-            elif has_vehicle: return "guided_discovery"
-            return "discovery"
-
-        # 3. NO VEHICLE = NO RECOMMENDATION/CLOSING
-        if not has_vehicle:
-            # Force reset if vehicle context was cleared or is incomplete
-            state["resolved_product"] = None
-            state["shown_products"] = []
-            return "discovery"
-
-        # --- RULE: CLOSING REQUIRES A PRODUCT ---
-        if current_intent == "purchase_intent" or state.get("sales_stage") == "closing":
-            if resolved_product and resolved_product != "None":
-                return "closing"
-            # Fall back to recommendation if they try to buy nothing
-            return "recommend" if has_vehicle else "discovery"
-            
-        if has_vehicle and has_pref: return "recommend"
-        elif has_vehicle: return "guided_discovery"
-        return "discovery"
+        return {
+            "vehicle_context": vc,
+            "vehicle_locked": bool(vc.get("year") and vc.get("make") and vc.get("model")),
+            "budget_max": attrs.get("budget_max") or state.get("budget_max")
+        }

@@ -28,6 +28,7 @@ async def fitment_node(state: GraphState):
         }
 
     # 2. PERFORM FITMENT VALIDATION
+    from chatbot.helpers.config_cache import ConfigCache
     v_type = str(vehicle_context.get("type", "sedan")).lower()
     
     # Heuristic override for common sedans if type is missing
@@ -38,7 +39,7 @@ async def fitment_node(state: GraphState):
         if any(b in make for b in sedan_brands) or any(m in model for m in ["civic", "accord", "a4", "3 series", "c class"]):
             v_type = "sedan"
 
-    limits = FitmentGuard.LIMITS.get(v_type, FitmentGuard.LIMITS["sedan"])
+    limits = await ConfigCache.get_vehicle_limits(v_type)
     
     status = "safe"
     issues = []
