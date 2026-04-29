@@ -32,6 +32,14 @@ async def lead_evaluator_node(state: GraphState):
         debug_info["reason"] = "User requested hard reset."
         return {"cta_intent": "greeting", "raw_response_data": {"action": "reset"}, "debug_info": debug_info}
 
+    if intent == "out_of_scope":
+        debug_info["reason"] = "Intent: Out of Scope. Triggering recovery."
+        return {"cta_intent": "recovery", "raw_response_data": raw_data, "debug_info": debug_info}
+    
+    if intent == "greeting":
+        debug_info["reason"] = "Intent: Greeting."
+        return {"cta_intent": "greeting", "raw_response_data": raw_data, "debug_info": debug_info}
+
     # 2. PRIORITY LEVEL 2: CONVERSION LOCKDOWN (Soft Lockdown)
     if phase == "PURCHASE":
         # Allow questions/clarifications but redirect back to the deal

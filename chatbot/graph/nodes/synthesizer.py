@@ -96,6 +96,7 @@ async def synthesizer_node(state: GraphState):
         resolved_product=state.get("resolved_product") or "None",
         validation_status=raw_data.get("validation_status", "None"),
         validation_notes=raw_data.get("validation_notes", "None"),
+        summary=state.get("summary") or "Conversation just started.",
         product_data=formatted_products
     )
     
@@ -139,12 +140,11 @@ async def synthesizer_node(state: GraphState):
     elif cta_intent == "safe_fallback":
         final_output = "I want to ensure your build is perfect. Would you like to continue looking at wheel options for your vehicle, or do you have a specific technical question?"
     elif cta_intent == "close":
-        final_output = f"Perfect. Your order for the {state.get('resolved_product')} is being finalized. Our team will reach out to the contact details provided shortly to complete the transaction. Is there anything else I can help you with today?"
+        final_output = f"Excellent choice. I've generated your formal technical quote for the {state.get('resolved_product')} and sent it to your email. You should receive it shortly. Would you like to explore other wheel finishes for your {vehicle_make}, or is there anything else I can assist you with today?"
     elif cta_intent == "break_loop_with_guidance":
         final_output = f"I've shared quite a few styles! To simplify things, I can narrow this down to the top 3 best-selling options for your {vehicle_make} that I know are in stock. Would you like me to do that?"
     
     return {
-        "messages": [AIMessage(content=final_output)],
         "last_action": action_type if action_type != "pattern_mismatch" else "info",
         "final_response": final_output,
         "last_final_response": final_output

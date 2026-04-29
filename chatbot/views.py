@@ -92,7 +92,7 @@ class ChatStreamView(View):
             throttle_key = f"throttle_{session_key}"
             request_count = await sync_to_async(cache.get)(throttle_key, 0)
             
-            if request_count >= 20:
+            if request_count >= 200:
                 logger.error(f"RATE LIMIT TRIGGERED: Session={session_key[:8]}")
                 return JsonResponse({"error": "Rate limit exceeded."}, status=429)
             

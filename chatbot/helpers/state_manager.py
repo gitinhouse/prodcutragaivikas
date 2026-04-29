@@ -148,5 +148,8 @@ class StateManager:
         return {
             "vehicle_context": vc,
             "vehicle_locked": bool(vc.get("year") and vc.get("make") and vc.get("model")),
-            "budget_max": attrs.get("budget_max") or state.get("budget_max")
+            "budget_max": attrs.get("budget_max") or state.get("budget_max"),
+            "customer_name": attrs.get("customer_name") or state.get("customer_name"),
+            "customer_email": attrs.get("customer_email") or state.get("customer_email"),
+            "has_email": bool(attrs.get("customer_email") or state.get("customer_email") or state.get("has_email"))
         }

@@ -48,6 +48,7 @@ class GraphState(MessagesState):
     is_greeting: bool
     
     # --- MEMORY & RESULTS ---
+    summary: str # Semantic Memory Summary (Long-term context)
     raw_response_data: Dict[str, Any] # Products, reasons, flags
     recommended_products: List[str] # Names of shown products
     shown_products: List[str] # Persistence list to avoid repeats

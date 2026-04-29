@@ -11,9 +11,9 @@ from chatbot.graph.nodes.fitment_node import fitment_node
 from chatbot.graph.nodes.lead_evaluator import lead_evaluator_node
 from chatbot.graph.nodes.synthesizer import synthesizer_node
 from chatbot.graph.nodes.safety_guard import safety_guard_node
+from chatbot.graph.nodes.summarizer import summarizer_node
 
 from chatbot.graph.edges import route_to_action
-
 
 def create_sales_graph(checkpointer=None):
     """
@@ -21,6 +21,9 @@ def create_sales_graph(checkpointer=None):
     Streamlined, High-Fidelity, Domain-Locked.
     """
     workflow = StateGraph(GraphState)
+
+    # 0. Memory Level (Summarizer)
+    workflow.add_node("Summarizer", summarizer_node)
 
     # 1. Verification Level (Super-Node)
     workflow.add_node("Validator", validator_node)
@@ -41,8 +44,9 @@ def create_sales_graph(checkpointer=None):
     
     # --- TOPOLOGY ---
     
-    # Entry Chain
-    workflow.add_edge(START, "Validator")
+    # Entry Chain (Memory -> Verification -> Strategy)
+    workflow.add_edge(START, "Summarizer")
+    workflow.add_edge("Summarizer", "Validator")
     workflow.add_edge("Validator", "Controller")
     
     # Action Routing (Deterministic Branches from Controller)
