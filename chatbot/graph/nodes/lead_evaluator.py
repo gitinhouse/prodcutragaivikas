@@ -41,6 +41,22 @@ async def lead_evaluator_node(state: GraphState):
         return {"cta_intent": "greeting", "raw_response_data": raw_data, "debug_info": debug_info}
 
     # 2. PRIORITY LEVEL 2: CONVERSION LOCKDOWN (Soft Lockdown)
+    last_cta = state.get("cta_intent")
+    
+    # TRANSITION: After successful Close
+    if last_cta == "close" or phase == "COMPLETED":
+        if intent in ["acknowledgement", "thank_you", "greeting"]:
+            debug_info["reason"] = "Sale completed. Providing final sign-off."
+            return {"cta_intent": "final_thank_you", "raw_response_data": {**raw_data, "phase": "COMPLETED"}, "debug_info": debug_info}
+        
+        # If they ask a new question, move back to Browsing
+        if intent in ["product_search", "fitment_lookup"]:
+             phase = "BROWSING"
+             debug_info["reason"] = "Post-sale search detected. Returning to browsing."
+        else:
+            # Stay in completed for generic talk
+            return {"cta_intent": "final_thank_you", "raw_response_data": {**raw_data, "phase": "COMPLETED"}, "debug_info": debug_info}
+
     if phase == "PURCHASE":
         # Allow questions/clarifications but redirect back to the deal
         if intent in ["product_detail", "info_request", "brand_inquiry"]:

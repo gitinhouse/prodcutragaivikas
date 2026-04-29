@@ -141,6 +141,8 @@ async def synthesizer_node(state: GraphState):
         final_output = "I want to ensure your build is perfect. Would you like to continue looking at wheel options for your vehicle, or do you have a specific technical question?"
     elif cta_intent == "close":
         final_output = f"Excellent choice. I've generated your formal technical quote for the {state.get('resolved_product')} and sent it to your email. You should receive it shortly. Would you like to explore other wheel finishes for your {vehicle_make}, or is there anything else I can assist you with today?"
+    elif cta_intent == "final_thank_you":
+        final_output = f"You're very welcome! It was a pleasure helping you perfect the build for your {vehicle_make}. Your formal quote is in your inbox—feel free to reach out if you have any follow-up questions. Enjoy your new setup!"
     elif cta_intent == "break_loop_with_guidance":
         final_output = f"I've shared quite a few styles! To simplify things, I can narrow this down to the top 3 best-selling options for your {vehicle_make} that I know are in stock. Would you like me to do that?"
     
