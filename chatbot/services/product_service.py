@@ -88,7 +88,7 @@ class ProductService:
         query_text: str,
         entities: Dict[str, Any],
         query_vector: Optional[List[float]] = None,
-        exclude_ids: Optional[List[str]] = None,
+        exclude_names: Optional[List[str]] = None,
         limit: int = 4
     ) -> List[Dict[str, Any]]:
         known_brands = await ConfigCache.get_wheel_brands()
@@ -102,8 +102,14 @@ class ProductService:
                 ).first()
                 if sku_match: return [sku_match]
 
+            from django.db.models.functions import Concat
+            from django.db.models import Value
+            
             queryset = Product.objects.select_related('brand')
-            if exclude_ids: queryset = queryset.exclude(id__in=exclude_ids)
+            if exclude_names:
+                queryset = queryset.annotate(
+                    full_m_name=Concat('brand__name', Value(' '), 'name')
+                ).exclude(full_m_name__in=exclude_names)
 
             diameter = entities.get("size")
             bolt_pattern = entities.get("bolt_pattern")
@@ -163,6 +169,7 @@ class ProductService:
             return results
 
         raw_results = await sync_to_async(_execute_search_logic, thread_sensitive=False)(known_brands)
+        logger.info(f"ProductService: Returning {len(raw_results)} final products: {[p.name for p in raw_results]}")
         return [ProductService._serialize_product(p) for p in raw_results]
 
     @staticmethod
@@ -186,7 +193,7 @@ class ProductService:
         if make and model:
             products = await ProductService.get_wheels_by_fitment(
                 make=make, model=model, year=year,
-                entities=filters, limit=limit
+                entities=filters, exclude_names=exclude, limit=limit
             )
             # Check if any filtering happened inside get_wheels_by_fitment
             # (Note: get_wheels_by_fitment already does some internal relaxation)
@@ -201,6 +208,7 @@ class ProductService:
         products = await ProductService.universal_search(
             query_text=filters.get("style", "premium wheels"),
             entities=filters,
+            exclude_names=exclude,
             limit=limit
         )
         return {
@@ -214,7 +222,7 @@ class ProductService:
     async def get_wheels_by_fitment(
         make: str, model: str, year: Optional[int] = None, 
         entities: Optional[Dict[str, Any]] = None,
-        exclude_ids: Optional[List[str]] = None,
+        exclude_names: Optional[List[str]] = None,
         limit: int = 12
     ) -> List[Dict[str, Any]]:
         def _execute():
@@ -239,25 +247,36 @@ class ProductService:
                     flex_query = query & Q(model__icontains=model)
                 fitments = Fitment.objects.select_related('product', 'product__brand').filter(flex_query)
             
+            from django.db.models.functions import Concat
+            from django.db.models import Value
+            
             product_ids = fitments.values_list('product_id', flat=True).distinct()
             base_queryset = Product.objects.select_related('brand').filter(id__in=product_ids)
+            logger.info(f"ProductService: Found {base_queryset.count()} total fitment candidates for {make} {model}.")
             
-            if exclude_ids:
-                base_queryset = base_queryset.exclude(id__in=exclude_ids)
+            if exclude_names:
+                base_queryset = base_queryset.annotate(
+                    full_m_name=Concat('brand__name', Value(' '), 'name')
+                ).exclude(full_m_name__in=exclude_names)
+                logger.info(f"ProductService: After excluding {len(exclude_names)} shown products, {base_queryset.count()} candidates remain.")
 
-            # --- PESSIMISTIC TECHNICAL FIREWALL: Bolt Pattern Lock ---
+            # --- SMART TECHNICAL FIREWALL: Bolt Pattern Alignment ---
             valid_patterns = ConfigCache.get_patterns_sync(make, model)
             if valid_patterns:
+                # We trust the Fitment Table, but we FILTER OUT obvious mechanical mismatches
+                # (e.g., if the car is 6x135, we don't show a 5x114.3 wheel even if linked in DB)
                 pattern_query = Q()
                 for p in valid_patterns:
-                    # Strict pattern matching to prevent 5x120 leaking into 5x114.3
-                    pattern_query |= Q(bolt_pattern__iexact=p) | Q(bolt_pattern__icontains=f" {p}") | Q(bolt_pattern__istartswith=f"{p},")
+                    pattern_query |= Q(bolt_pattern__iexact=p) | Q(bolt_pattern__icontains=f"{p}")
                 
-                base_queryset = base_queryset.filter(pattern_query)
-                logger.info(f"ProductService: Technical Firewall active for {make} {model}. Patterns: {valid_patterns}")
-            else:
-                logger.warning(f"ProductService: NO VALID PATTERNS FOUND for {make} {model}. Using base fitment with caution.")
-
+                # Apply the filter but allow a fallback if it kills EVERY result
+                filtered_queryset = base_queryset.filter(pattern_query)
+                if filtered_queryset.exists():
+                    base_queryset = filtered_queryset
+                    logger.info(f"ProductService: Filtered out mismatches for {make} {model}. Remaining: {base_queryset.count()}")
+                else:
+                    logger.warning(f"ProductService: Strict pattern filter would return 0 results. Trusting Fitment Table mapping for {make} {model}.")
+            
             # 2. Refined Search (Style/Budget)
             refined_queryset = base_queryset
             

@@ -25,16 +25,18 @@ async def recommender_node(state: GraphState):
     year = vehicle_context.get("year")
     
     # 1. SOFT GUARD: Missing Vehicle
-    if phase == "VEHICLE_COLLECTION":
-        logger.info(f"Recommender: Missing vehicle info. Showing featured options while asking for vehicle.")
-        featured_wheels = await ProductService.universal_search(query_text="popular wheels", limit=3)
+    entities = state.get("extracted_entities", {})
+    has_search_trigger = any(entities.get(k) for k in ["brand", "style", "wheel_brand", "finish"])
+    
+    if phase == "VEHICLE_COLLECTION" and not has_search_trigger:
+        logger.info(f"Recommender: Missing vehicle info and no search trigger. No products shown yet.")
         return {
             "raw_response_data": {
                 "action": "discovery", 
-                "total_results": len(featured_wheels), 
-                "products": featured_wheels
+                "total_results": 0, 
+                "products": []
             },
-            "has_valid_results": len(featured_wheels) > 0
+            "has_valid_results": False
         }
 
     # 1.5 PRODUCT DETAIL RESOLUTION

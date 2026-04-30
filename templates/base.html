@@ -13,16 +13,31 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
     
     <style>
-        body { font-family: 'Outfit', sans-serif; }
+        body { font-family: 'Outfit', sans-serif; background-color: #FAFBFF; }
         
         /* Custom Animations */
-        @keyframes slideIn { from { transform: translateX(-20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        .slide-in { animation: slideIn 0.4s ease-out; }
+        @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .slide-in { animation: slideIn 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
         
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .fade-in { animation: fadeIn 0.8s ease-out; }
+
         .nav-link.active {
-            background-color: #eff6ff;
-            color: #2563eb;
-            border-right: 4px solid #2563eb;
+            background-color: #F0F7FF;
+            color: #2563EB;
+            border-right: 4px solid #2563EB;
+        }
+
+        /* Luxury UI Elements */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.02);
+        }
+
+        .hero-glow {
+            box-shadow: 0 0 80px 0 rgba(37, 99, 235, 0.08);
         }
 
         /* Typing Dots */
@@ -30,17 +45,16 @@
         @keyframes typing { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
 
         /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+        ::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
-<body class="bg-gray-50 flex h-screen overflow-hidden">
+<body class="flex h-screen overflow-hidden">
 
     <!-- Sidebar -->
-    <aside class="w-64 bg-white border-r border-gray-200 flex flex-col hidden md:flex z-50">
+    <aside id="main-sidebar" class="w-64 bg-white border-r border-gray-200 flex flex-col hidden md:flex z-50 {% if hide_sidebar %}md:!hidden{% endif %}">
         <div class="p-6 border-b border-gray-100 flex items-center">
             <div class="bg-blue-600 rounded-lg p-2 mr-3 shadow-lg shadow-blue-200">
                 <i data-lucide="bot" class="text-white w-5 h-5"></i>
