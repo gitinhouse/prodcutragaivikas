@@ -25,8 +25,10 @@ async def clarify_node(state: GraphState):
     missing_fields = []
     if not has_make_model:
         missing_fields = ["vehicle (Year, Make, Model)"]
+        cta_intent = "ask_vehicle"
     elif not has_style:
         missing_fields = ["preferred style or usage"]
+        cta_intent = "ask_style"
     elif not has_budget:
         missing_fields = ["budget range"]
     else:
@@ -42,3 +44,4 @@ async def clarify_node(state: GraphState):
             "missing_fields": missing_fields
         }
     }
+

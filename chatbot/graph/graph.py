@@ -17,7 +17,7 @@ from chatbot.graph.edges import route_to_action
 
 def create_sales_graph(checkpointer=None):
     """
-    Sebastian 'Production 7' Architecture.
+    ExtremeSalesAI 'Production 7' Architecture.
     Streamlined, High-Fidelity, Domain-Locked.
     """
     workflow = StateGraph(GraphState)

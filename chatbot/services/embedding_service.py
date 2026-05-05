@@ -36,17 +36,17 @@ class EmbeddingService:
     async def update_product_embedding(cls, product):
         """
         Sequential update for a single product. 
-        Used by Django Signals for manual/Admin saves.
         Async-Safe.
         """
-        # We now source text solely from the new embedding_text field
         combined_text = product.embedding_text
         
         if not combined_text:
-            brand_name = product.brand.name if product.brand else "Unknown"
-            cat_name = product.category.name if product.category else "General"
-            combined_text = f"{product.name} {brand_name} {cat_name} {product.description}"
-            logger.warning(f"Embedding text missing for {product.name}. Falling back to raw text.")
+            # Generic fallback for WheelProduct
+            brand = getattr(product, 'brand_desc', 'Unknown')
+            name = getattr(product, 'product_name', 'Unknown')
+            desc = getattr(product, 'product_desc', '')
+            combined_text = f"{brand} {name} {desc}"
+            logger.warning(f"Embedding text missing for {name}. Falling back to raw text.")
 
         vector = cls.generate_embedding(combined_text)
         
@@ -55,24 +55,14 @@ class EmbeddingService:
             product.save(update_fields=['embedding'])
             
         await sync_to_async(_save)()
-        logger.info(f"Updated ENRICHED embedding for Product: {product.name}")
+        logger.info(f"Updated embedding for: {getattr(product, 'product_name', 'Item')}")
 
     @classmethod
     def batch_update_products_sync(cls, products: List):
-        """
-        Synchronous wrapper for batch processing.
-        To be used by legacy synchronous views and services (like UploadService).
-        """
-        # We use async_to_sync to reuse the high-speed batch logic
         return async_to_sync(cls.batch_update_products_async)(products)
 
     @classmethod
     async def batch_update_products_async(cls, products: List):
-        """
-        High-Speed Batch Processing for Product Catalog Ingestion.
-        Processes products in groups of 100 to stay within token limits.
-        Async-Safe.
-        """
         if not products:
             return
 
@@ -81,33 +71,25 @@ class EmbeddingService:
         
         for i in range(0, len(products), batch_size):
             batch = products[i:i + batch_size]
-            
-            # 1. Prepare Golden Strings
             texts_to_embed = []
             for p in batch:
-                # We now source text solely from the new embedding_text field
                 combined_text = p.embedding_text
-                
                 if not combined_text:
-                    brand_name = p.brand.name if p.brand else "Unknown"
-                    cat_name = p.category.name if p.category else "General"
-                    combined_text = f"{p.name} {brand_name} {cat_name} {p.description}"
-                
+                    brand = getattr(p, 'brand_desc', 'Unknown')
+                    name = getattr(p, 'product_name', 'Unknown')
+                    desc = getattr(p, 'product_desc', '')
+                    combined_text = f"{brand} {name} {desc}"
                 texts_to_embed.append(combined_text)
             
-            # 2. Batch Embed (Directly calls AI once per 100 items)
             try:
-                # embed_documents is typically a blocking network call in LangChain
-                # but we wrap it in sync_to_async to be clean
                 vectors = await sync_to_async(embeddings_client.embed_documents)(texts_to_embed)
                 
-                # 3. Save vectors back to models
                 def _batch_save():
                     for idx, p in enumerate(batch):
                         p.embedding = vectors[idx]
                         p.save(update_fields=['embedding'])
                 
                 await sync_to_async(_batch_save)()
-                logger.info(f"Batch Processing Success: {len(batch)} products embedded.")
+                logger.info(f"Batch Processing Success: {len(batch)} items embedded.")
             except Exception as e:
-                logger.error(f"Batch embedding failed for a chunk: {str(e)}")
+                logger.error(f"Batch embedding failed: {str(e)}")

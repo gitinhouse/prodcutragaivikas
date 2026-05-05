@@ -60,7 +60,7 @@ class StreamService:
         return cls._graph
 
     @classmethod
-    async def get_stream(cls, user_input: str, thread_id: str) -> AsyncGenerator[str, None]:
+    async def get_stream(cls, user_input: str, thread_id: str, sku: Optional[str] = None) -> AsyncGenerator[str, None]:
         """Runs LangGraph and yields SSE tokens."""
         logger.info(f"Starting Graph Execution Loop [Thread: {thread_id[:12]}]")
         
@@ -86,7 +86,8 @@ class StreamService:
                     "style": session_obj.identified_style.get("style", None)
                 },
                 "identified_budget": float(session_obj.identified_budget) if session_obj.identified_budget else None,
-                "identified_style": session_obj.identified_style
+                "identified_style": session_obj.identified_style,
+                "target_sku": sku
             }
             
             tokens_streamed = False
@@ -126,6 +127,13 @@ class StreamService:
                         # 4. TRACE: Node Completion
                         if kind == "on_chain_end" and name in GRAPH_NODES:
                             logger.info(f"Node Transition: Completed {name}.")
+                            if name == "Synthesizer":
+                                output = event["data"].get("output", {})
+                                products = output.get("products", [])
+                                if products:
+                                    has_vehicle = output.get("has_vehicle", False)
+                                    yield f"data: {json.dumps({'type': 'products', 'content': products, 'has_vehicle': has_vehicle, 'node': name})}\n\n"
+                            
                             if name in ["Synthesizer", "SafetyGuard"] and not tokens_streamed:
                                 output = event["data"].get("output", {})
                                 messages = output.get("messages", [])

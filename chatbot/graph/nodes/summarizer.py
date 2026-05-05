@@ -4,7 +4,7 @@ from chatbot.graph.state import GraphState
 from config.llm_config import get_llm
 from chatbot.helpers.prompts import SUMMARIZER_PROMPT
 
-# 🔥 MASTER LOGGER FOR TRACEABILITY
+# MASTER LOGGER FOR TRACEABILITY
 logger = logging.getLogger("chatbot.nodes.summarizer")
 
 async def summarizer_node(state: GraphState):

@@ -23,9 +23,9 @@ SAFE_GREETINGS = [
 ]
 
 STATIC_GREETINGS = [
-    "Welcome to the Studio. I'm Sebastian — your wheel specialist. To get us started: are you outfitting a Truck, SUV, or Jeep?",
-    "Hey there. Sebastian here. Looking to upgrade your vehicle's stance with some premium wheels? What are you driving?",
-    "Welcome. I'm Sebastian. Let's get your build dialed in. Are we working on a Truck, SUV, or Jeep today?"
+    "Welcome to the Studio. I'm Axle — your Lead Advisor. To get us started: are you outfitting a Truck, SUV, or Jeep?",
+    "Hello. Axle here. Looking to upgrade your vehicle's stance with some premium wheels? What are you driving?",
+    "Welcome. I'm Axle. Let's get your build dialed in. Are we working on a Truck, SUV, or Jeep today?"
 ]
 
 # --- 3. BLACKLISTS (RESTRICED CATEGORIES) ---
@@ -58,8 +58,8 @@ class DomainTypes:
 
 # --- 5. STATIC MESSAGES (Hard-Block & Pivot Bypasses) ---
 STATIC_MESSAGES = {
-    "hard_block": "That's outside my wheelhouse (pun intended). What can I help you with for your build?",
-    "pivot_tires": "Tires aren't our lane, but if you're looking to upgrade the rims while you're at it — I've got you. What are you driving?",
-    "pivot_lift": "Lift kits we leave to the suspension guys. But if you want wheels that match the lifted stance — that's exactly what I do. Truck, SUV, or Jeep?",
-    "no_results": "I couldn’t find an exact match, but I can suggest close options or adjust filters to better fit your needs."
+    "hard_block": "I’m an expert when it comes to wheels, but that topic is a bit outside my lane! I’d love to help you perfect your build—what are we looking for in terms of setup?",
+    "pivot_tires": "I focus exclusively on high-end wheel fitment, so I don't handle tires directly. However, if you're looking to upgrade your rims while you're at it, I can find you the perfect set. What are you driving?",
+    "pivot_lift": "I’ll leave the lift kits to the suspension experts, but if you want wheels that perfectly complement a lifted stance, you’re in the right place. Truck, SUV, or Jeep?",
+    "no_results": "I didn’t find a perfect match in our live inventory right now, but I’ve got plenty of similar styles that would look incredible on your build. Should we try adjusting the finish or size?"
 }

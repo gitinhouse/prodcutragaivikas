@@ -18,6 +18,12 @@ logger = logging.getLogger("chatbot.views")
 class ChatFrontendView(TemplateView):
     template_name = "chatbot/chat.html"
 
+    def get_context_data(self, **kwargs):
+        import uuid
+        context = super().get_context_data(**kwargs)
+        context["thread_id"] = str(uuid.uuid4())
+        return context
+
 class ChatUploadView(View):
     """
     Handles Knowledge Base file uploads with strict security validation.
@@ -47,7 +53,7 @@ class ChatUploadView(View):
             return render(request, self.template_name, {"error": "Invalid file type. Please upload Excel or CSV."})
         
         file_content = file_obj.read()
-        import_type = request.POST.get('import_type', 'legacy')
+        import_type = request.POST.get('import_type', 'wheel_products')
         results = UploadService.process_file(file_content, file_obj.name, import_type=import_type)
         
         if results.get("errors"):
@@ -57,10 +63,10 @@ class ChatUploadView(View):
                 "error": "Some rows failed to import. Check details below."
             })
             
-        logger.info(f"Upload successful: {results['success']} products imported.")
+        logger.info(f"Upload successful: {results['success']} items processed.")
         return render(request, self.template_name, {
             "results": results,
-            "success": f"Successfully processed {results['success']} products!"
+            "success": f"Successfully processed {results['success']} items!"
         })
 
 class ChatStreamView(View):
@@ -111,6 +117,7 @@ class ChatStreamView(View):
             # 4. Input Validation & Masking
             body = json.loads(request.body)
             raw_input = body.get('message', '')
+            sku = body.get('sku')
             
             if not raw_input:
                 return JsonResponse({"error": "No message"}, status=400)
@@ -121,8 +128,8 @@ class ChatStreamView(View):
                 logger.info("PII Shield: Sensitive data masked successfully.")
 
             # 5. Initialize the Stream (Logged)
-            logger.info(f"Handing off to StreamService for generation...")
-            stream_gen = StreamService.get_stream(safe_input, secure_thread_id)
+            logger.info(f"Handing off to StreamService for generation... SKU: {sku}")
+            stream_gen = StreamService.get_stream(safe_input, secure_thread_id, sku=sku)
             
             response = StreamingHttpResponse(stream_gen, content_type='text/event-stream')
             response['Cache-Control'] = 'no-cache'

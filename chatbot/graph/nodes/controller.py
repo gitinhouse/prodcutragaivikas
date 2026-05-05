@@ -35,7 +35,18 @@ def _match_product(query: str, shown_products: List[str]) -> Optional[str]:
     return None
 
 def _route(intent, state, result, updated_state, user_query):
+    # --- 🔥 HARDENED SKU ROUTING ---
+    target_sku = state.get("target_sku")
     phase = updated_state.get("phase", "VEHICLE_COLLECTION")
+    if target_sku:
+        logger.info(f"Controller: Direct SKU detected ({target_sku}). Forcing Recommender route.")
+        return {
+            "intent": "product_detail",
+            "action_type": "recommend",
+            "cta_intent": "product_detail",
+            "phase": phase
+        }
+
     shown_products = updated_state.get("shown_products", [])
     resolved_product = updated_state.get("resolved_product")
     has_lead = bool(state.get("customer_email") or state.get("has_email"))
@@ -62,6 +73,15 @@ def _route(intent, state, result, updated_state, user_query):
 
     if intent == "out_of_scope":
         return {**base, "action_type": "info", "cta_intent": "recovery"}
+
+    if intent == "store_inquiry":
+        return {**base, "action_type": "info", "cta_intent": "store_inquiry"}
+
+    if intent == "brand_inquiry":
+        return {**base, "action_type": "info", "cta_intent": "brand_inquiry"}
+
+    if intent == "help_request":
+        return {**base, "action_type": "info", "cta_intent": "help_request"}
 
     if signal_type == "RESET":
         return {**base, "action_type": "discovery", "cta_intent": "ask_vehicle"}
@@ -93,8 +113,14 @@ def _route(intent, state, result, updated_state, user_query):
 
     if intent == "product_detail" or (intent == "info_request" and is_contextual):
         about = resolved_product or (shown_products[0] if shown_products else None)
+        
+        # Handle "Lookup product by SKU" case (intent is product_detail, but no SKU found)
+        if not target_sku and "sku" in user_query and not result.get("attributes", {}).get("sku"):
+             return {**base, "action_type": "info", "cta_intent": "ask_sku"}
+
         if not about and not llm_selected:
             return {**base, "action_type": "info", "cta_intent": "clarify_product"}
+        
         return {**base, "action_type": "info", "cta_intent": "product_detail",
                 "context_payload": {"about_product": about}}
 
@@ -107,19 +133,53 @@ async def controller_node(state: GraphState):
     full_history = state.get("messages", [])
     sales_stage = state.get("sales_stage", "discovery")
 
-    # 1. LLM CLASSIFICATION
+    # 1. LLM CLASSIFICATION & DIRECT SKU BYPASS
     from chatbot.graph.schemas import ControllerSchema
+    from chatbot.services.product_service import ProductService
+    
     llm = get_llm()
-    try:
-        structured_llm = llm.with_structured_output(ControllerSchema)
-        raw_result = await structured_llm.ainvoke([
-            {"role": "system", "content": CLASSIFIER_PROMPT},
-            *(full_history[-6:])
-        ])
-        result = raw_result.model_dump()
-    except Exception as e:
-        logger.error(f"Controller: Structured Output failed: {e}")
-        result = {"intent": "product_search", "category": "wheels", "attributes": {}, "signal_type": "EXPLICIT_INTENT", "confidence": 1.0}
+    result = None
+    
+    # 1.1 Direct SKU Bypass Check
+    sku_candidate = ProductService._extract_sku_candidate(user_query)
+    if sku_candidate:
+        sku_candidate = sku_candidate.strip()
+        logger.info(f"Controller: Extracted SKU candidate: '{sku_candidate}' from query: '{user_query}'")
+        inventory_check = await ProductService.check_inventory_status(sku_candidate)
+        status = inventory_check.get("status")
+        
+        # Bypass if we found the product (regardless of stock status - we can handle OOS in recommender)
+        if status in ["In Stock", "Backordered"]:
+            logger.info(f"Controller: Direct SKU Bypass verified for {sku_candidate}. Found in DB. Skipping LLM.")
+            result = {
+                "intent": "product_detail",
+                "category": "wheels",
+                "selected_product": inventory_check.get("product", {}).get("name", sku_candidate),
+                "is_contextual": True,
+                "signal_type": "EXPLICIT_INTENT",
+                "attributes": {},
+                "missing_fields": []
+            }
+            state_updates_sku = {"target_sku": sku_candidate}
+            state["target_sku"] = sku_candidate # For immediate local access if needed
+        else:
+            logger.warning(f"Controller: SKU candidate '{sku_candidate}' not found in DB (Status: {status}). Falling back to LLM.")
+            state_updates_sku = {}
+    else:
+        state_updates_sku = {}
+            
+    # 1.2 Standard LLM Classification (if no SKU bypass)
+    if not result:
+        try:
+            structured_llm = llm.with_structured_output(ControllerSchema)
+            raw_result = await structured_llm.ainvoke([
+                {"role": "system", "content": CLASSIFIER_PROMPT},
+                *(full_history[-6:])
+            ])
+            result = raw_result.model_dump()
+        except Exception as e:
+            logger.error(f"Controller: Structured Output failed: {e}")
+            result = {"intent": "product_search", "category": "wheels", "attributes": {}, "signal_type": "EXPLICIT_INTENT", "confidence": 1.0}
 
     # 2. DETERMINISTIC OVERRIDES
     confirm_patterns = r"(?i)^(yes|correct|yep|yeah|that's it|exactly|confirm|yes it is|it is correct)$"
@@ -127,9 +187,13 @@ async def controller_node(state: GraphState):
     is_thanks = bool(re.search(r"\b(thank|thanks|thx|ty|grateful)\b", user_query))
     is_contact_info = bool(re.search(r'[\w\.-]+@[\w\.-]+\.\w+', user_query)) or (len(user_query.split()) <= 4 and bool(re.search(r"\b(my name is|i am|it's)\b", user_query)))
     
+    is_help_request = bool(re.search(r"\b(how can you help|what can you do|help me|guidance|how it works)\b", user_query))
+    
     if is_thanks:
         result["intent"] = "thank_you"
         result["signal_type"] = "ACKNOWLEDGEMENT"
+    elif is_help_request:
+        result["intent"] = "help_request"
     elif is_contact_info and sales_stage == "closing":
         result["intent"] = "info_request"
         result["is_contextual"] = True
@@ -149,7 +213,7 @@ async def controller_node(state: GraphState):
              result["signal_type"] = "RESET"
              result["intent"] = "product_search"
 
-    elif bool(re.search(r"\b(20\d{2}|audi|bmw|civic|honda|mercedes|tesla|toyota|jeep|ford|chevy|dodge|ram|maruti|suzuki|tata|mahindra)\b", user_query)) or bool(re.search(r"\$\d+|under \d+|budget", user_query)):
+    elif bool(re.search(r"\b(20\d{2}|audi|bmw|civic|honda|mercedes|tesla|toyota|jeep|ford|chevy|dodge|ram|maruti|suzuki|tata|mahindra)\b", user_query)) or bool(re.search(r"\$\d+|under \d+|budget", user_query)) or bool(re.search(r"\b\d{2}x\d+(\.\d+)?\b", user_query)):
         if result.get("intent") not in ["purchase_intent", "product_detail", "needs_clarity"]:
             result["intent"] = "product_search"
             
@@ -205,7 +269,14 @@ async def controller_node(state: GraphState):
     state_updates = await StateManager.process_state(state, result, user_query)
     state_updates["rejected_products"] = rejected_products
     
+    # --- 🔥 HARDENED SKU STATE INJECTION ---
+    target_sku = state.get("target_sku")
+    if target_sku:
+        state_updates["intent"] = "product_detail"
+        state_updates["action_type"] = "recommend"
+        state_updates["cta_intent"] = "product_detail"
+
     temp_state = {**state, **state_updates}
     routing = _route(result["intent"], state, result, temp_state, user_query)
 
-    return {**state_updates, **routing}
+    return {**state_updates, **state_updates_sku, **routing}

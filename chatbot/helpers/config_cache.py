@@ -31,55 +31,40 @@ class ConfigCache:
     @classmethod
     @sync_to_async
     def _load_from_db(cls):
-        """Loads data from the database into memory."""
-        from chatbot.models import Brand, VehicleTypeLimit, BoltPatternRule, Fitment
+        """Loads data from the database into memory using the new schema."""
+        from chatbot.models import VehicleMake, VehicleModel, WheelProduct
         
-        logger.info("ConfigCache: Refreshing from database...")
+        logger.info("ConfigCache: Refreshing from new database tables...")
         start_time = time.time()
         
         try:
-            # 1. Brands
-            cls.WHEEL_BRANDS = list(Brand.objects.filter(is_wheel_brand=True).values_list('name', flat=True))
+            # 1. Brands from WheelProduct
+            cls.WHEEL_BRANDS = list(WheelProduct.objects.values_list('brand_desc', flat=True).distinct())
             
-            # 2. Vehicle Type Limits
+            # 2. Vehicle Type Limits (Note: These might need a new source or stay static for now)
+            # Since VehicleTypeLimit is being deleted, we'll use a robust default for now.
             cls.VEHICLE_LIMITS = {
-                obj.vehicle_type: {
-                    'max_diameter': obj.max_diameter,
-                    'max_width': obj.max_width
-                }
-                for obj in VehicleTypeLimit.objects.all()
+                "sedan": {"max_diameter": 20, "max_width": 9.5},
+                "suv": {"max_diameter": 24, "max_width": 11.0},
+                "truck": {"max_diameter": 26, "max_width": 14.0}
             }
             
-            # 3. Bolt Pattern Rules
-            make_rules = {}
-            model_rules = {}
+            # 3. Known Automotive Makes
+            # Derived from the flat VehicleMake table
+            cls.KNOWN_MAKES = list(VehicleMake.objects.values_list('make_fitment_value', flat=True).distinct())
+            cls.KNOWN_MAKES = [m.lower() for m in cls.KNOWN_MAKES if m]
             
-            for rule in BoltPatternRule.objects.all():
-                make_low = rule.make.lower()
-                if not rule.model:
-                    make_rules[make_low] = rule.patterns
-                else:
-                    model_low = rule.model.lower()
-                    if make_low not in model_rules:
-                        model_rules[make_low] = {}
-                    model_rules[make_low][model_low] = rule.patterns
-            
-            cls.MAKE_PATTERNS = make_rules
-            cls.MODEL_PATTERNS = model_rules
-            
-            # 4. Known Automotive Makes
-            # We derive this from the Fitment table (actual inventory coverage)
-            # plus any explicitly defined BoltPatternRules
-            inv_makes = list(Fitment.objects.values_list('make', flat=True).distinct())
-            rule_makes = list(BoltPatternRule.objects.values_list('make', flat=True).distinct())
-            cls.KNOWN_MAKES = list(set([m.lower() for m in inv_makes + rule_makes if m]))
+            # Note: BoltPatternRules are currently being phased out in favor of Fitment Group API data.
+            # We will rely on the static 'fallbacks' in get_patterns_sync for now.
+            cls.MAKE_PATTERNS = {}
+            cls.MODEL_PATTERNS = {}
             
             cls._last_updated = time.time()
             logger.info(f"ConfigCache: Refresh complete in {cls._last_updated - start_time:.4f}s. "
                         f"Loaded {len(cls.WHEEL_BRANDS)} brands and {len(cls.KNOWN_MAKES)} makes.")
             
         except Exception as e:
-            logger.error(f"ConfigCache: Failed to load from database: {e}")
+            logger.error(f"ConfigCache: Failed to load from new database: {e}")
 
     @classmethod
     async def get_wheel_brands(cls) -> List[str]:

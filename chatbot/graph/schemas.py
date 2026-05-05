@@ -11,6 +11,7 @@ class VehicleAttributes(BaseModel):
     style: Optional[str] = Field(None, description="The desired style (e.g. rugged, sporty, luxury)")
     finish: Optional[str] = Field(None, description="The desired wheel finish (e.g. matte black, chrome)")
     budget_max: Optional[float] = Field(None, description="The maximum price or budget for the wheels")
+    bolt_pattern: Optional[str] = Field(None, description="The desired bolt pattern (e.g. 5x114.3). Always convert to lowercase 'x'")
 
 class IdentitySchema(BaseModel):
     """Extracted lead information."""
@@ -34,7 +35,7 @@ class ProductAIExtraction(BaseModel):
 
 class ControllerSchema(BaseModel):
     """The structured output for intent classification and entity extraction."""
-    intent: str = Field(description="The primary intent: fitment_lookup, fitment_check, recommendation, product_search, show_more_options, product_detail, brand_inquiry, purchase_intent, greeting, info_request, out_of_scope")
+    intent: str = Field(description="The primary intent: fitment_lookup, fitment_check, recommendation, product_search, show_more_options, product_detail, brand_inquiry, purchase_intent, greeting, info_request, store_inquiry, help_request, out_of_scope")
     category: str = Field(default="wheels", description="The product category: wheels, tires, or other")
     confidence: float = Field(default=1.0, description="Confidence score from 0.0 to 1.0")
     domain: str = Field(default="in_scope", description="Whether the request is 'in_scope' or 'hard_out'")

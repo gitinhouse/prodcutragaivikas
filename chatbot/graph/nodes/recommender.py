@@ -2,12 +2,12 @@ import logging
 import re
 from chatbot.graph.state import GraphState
 from chatbot.services.product_service import ProductService
-from chatbot.helpers.fitment_guard import FitmentGuard
 
 # 🔥 MASTER LOGGER FOR TRACEABILITY
 logger = logging.getLogger("chatbot.nodes.recommender")
 
 async def recommender_node(state: GraphState):
+    import re
     """
     Expert Recommendation Node V9.
     Implements Filter Persistence and Phase-Aware Candidate Generation.
@@ -26,7 +26,8 @@ async def recommender_node(state: GraphState):
     
     # 1. SOFT GUARD: Missing Vehicle
     entities = state.get("extracted_entities", {})
-    has_search_trigger = any(entities.get(k) for k in ["brand", "style", "wheel_brand", "finish"])
+    target_sku = state.get("target_sku")
+    has_search_trigger = any(entities.get(k) for k in ["brand", "style", "wheel_brand", "finish", "sku"]) or bool(target_sku)
     
     if phase == "VEHICLE_COLLECTION" and not has_search_trigger:
         logger.info(f"Recommender: Missing vehicle info and no search trigger. No products shown yet.")
@@ -40,28 +41,123 @@ async def recommender_node(state: GraphState):
         }
 
     # 1.5 PRODUCT DETAIL RESOLUTION
-    if intent == "product_detail" and resolved_product:
-        logger.info(f"Recommender: Fetching technical details for {resolved_product}")
-        # Search explicitly for this product by name to get full specs
-        detail_results = await ProductService.search_products(
-            vehicle_context=vehicle_context,
-            filters={"style": resolved_product}, # Use name as style filter for targeted lookup
-            limit=1
-        )
-        product_detail = detail_results.get("products", [])[0] if detail_results.get("products") else None
+    # FORCE INTENT if SKU is directly provided from frontend or controller
+    if target_sku:
+        intent = "product_detail"
+        sku = target_sku.replace("#", "").strip() # Clean up any accidental hashes
+    else:
+        sku = entities.get("sku")
+    
+    if intent == "product_detail":
+        # Absolute Direct Lookup Layer
+        product_detail = None
         
+        # A. Try SKU first (Multi-Strategy)
+        if sku:
+            sku = sku.strip()
+            from chatbot.models import WheelProduct
+            from asgiref.sync import sync_to_async
+            # 1. Exact Match
+            product_detail = await sync_to_async(
+                lambda: WheelProduct.objects.filter(sku__iexact=sku).first(),
+                thread_sensitive=False
+            )()
+            
+            # 2. Contains Fallback (Sanity Check)
+            if not product_detail:
+                product_detail = await sync_to_async(
+                    lambda: WheelProduct.objects.filter(sku__icontains=sku).first(),
+                    thread_sensitive=False
+                )()
+        
+        # B. Try exact Name fallback
+        if not product_detail and resolved_product:
+            from chatbot.models import WheelProduct
+            from asgiref.sync import sync_to_async
+            product_detail = await sync_to_async(
+                lambda: WheelProduct.objects.filter(product_name__iexact=resolved_product).first(),
+                thread_sensitive=False
+            )()
+
+        logger.info(f"Recommender: Precision lookup for SKU={sku} result: {'FOUND' if product_detail else 'MISSING'}")
+
         if product_detail:
+            primary_product = ProductService._serialize_product(product_detail)
+            is_oos = primary_product.get("stock", 0) <= 0
+            
+            logger.info(f"Recommender: SKU found {sku}. Stock={primary_product.get('stock')}. Fetching alternatives.")
+            
+            # --- RESILIENT ALTERNATIVES SEARCH (Only if OOS) ---
+            alternatives = []
+            if is_oos:
+                logger.info(f"Recommender: SKU {primary_product['sku']} is OOS. Finding alternatives...")
+                
+                # Step 1: Strict Match (Size + Pattern + Finish)
+                search_filters = {
+                    "bolt_pattern": primary_product.get("bolt_pattern"),
+                    "size": primary_product.get("diameter"),
+                    "finish": primary_product.get("finish")
+                }
+                similar_results = await ProductService.search_products(
+                    vehicle_context=vehicle_context,
+                    filters=search_filters,
+                    exclude=[primary_product["sku"]],
+                    limit=3
+                )
+                alternatives = similar_results.get("products", [])
+
+                # Step 2: Relax Finish (Size + Pattern)
+                if len(alternatives) < 3:
+                    logger.info("Recommender: Relaxing finish constraint for alternatives...")
+                    relaxed_filters = {k: v for k, v in search_filters.items() if k != "finish"}
+                    more_results = await ProductService.search_products(
+                        vehicle_context=vehicle_context,
+                        filters=relaxed_filters,
+                        exclude=[primary_product["sku"]] + [p["sku"] for p in alternatives],
+                        limit=3 - len(alternatives)
+                    )
+                    alternatives.extend(more_results.get("products", []))
+
+                # Step 3: Global Size Match (Size only)
+                if len(alternatives) < 3:
+                    logger.info("Recommender: Relaxing bolt pattern for alternatives...")
+                    global_filters = {"size": primary_product.get("diameter")}
+                    global_results = await ProductService.search_products(
+                        vehicle_context=vehicle_context,
+                        filters=global_filters,
+                        exclude=[primary_product["sku"]] + [p["sku"] for p in alternatives],
+                        limit=3 - len(alternatives)
+                    )
+                    alternatives.extend(global_results.get("products", []))
+
+            # --- FINAL SELECTION ---
+            display_products = []
+            if not is_oos:
+                display_products.append(primary_product)
+            
+            display_products.extend(alternatives)
+            final_selection = display_products[:3]
+            
+            # Track shown products to avoid duplicates
+            new_shown = list(shown_products)
+            for p in final_selection:
+                p_sku = p.get('sku')
+                if p_sku and p_sku not in new_shown:
+                    new_shown.append(p_sku)
+
             return {
                 "raw_response_data": {
-                    "action": "product_detail",
-                    "product_info": product_detail,
-                    "products": [product_detail]
+                    "action": "recommend",
+                    "product_info": primary_product,
+                    "products": final_selection,
+                    "target_sku_oos": is_oos
                 },
-                "has_valid_results": True,
-                "resolved_product": resolved_product
+                "shown_products": new_shown,
+                "has_valid_results": len(final_selection) > 0,
+                "resolved_product": primary_product["marketing_name"]
             }
         else:
-            logger.warning(f"Recommender: Detail lookup failed for {resolved_product}")
+            logger.warning(f"Recommender: SKU lookup failed for {sku}. Falling through to search.")
 
     # 2. INVENTORY CHECK (PURCHASE Phase)
     if phase == "PURCHASE" and resolved_product:
@@ -104,7 +200,7 @@ async def recommender_node(state: GraphState):
         vehicle_context=vehicle_context,
         filters=search_entities,
         exclude=shown_products + rejected_products,
-        limit=5
+        limit=3
     )
     
     products = results.get("products", [])
@@ -124,12 +220,12 @@ async def recommender_node(state: GraphState):
         action = "pattern_mismatch"
         logger.warning(f"Recommender: Explicit pattern request {user_query} mismatch for {make} {model}")
         
-    # Append to persistence list
+    # Append to persistence list (Track by SKU for precision exclusion)
     new_shown = list(shown_products)
     for p in products:
-        m_name = p.get('marketing_name')
-        if m_name and m_name not in new_shown:
-            new_shown.append(m_name)
+        p_sku = p.get('sku')
+        if p_sku and p_sku not in new_shown:
+            new_shown.append(p_sku)
 
     return {
         "raw_response_data": {

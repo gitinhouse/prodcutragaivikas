@@ -31,9 +31,10 @@ class StateManager:
         checkout_started = state.get("cta_intent") in ["ask_lead_info", "confirm_order_on_file", "close"]
         email_captured = bool(state.get("customer_email") or state.get("has_email"))
 
-        if not vehicle_complete:
+        has_size = bool(state.get("active_filters", {}).get("size"))
+        if not vehicle_complete and not state.get("target_sku") and not has_size:
             return "VEHICLE_COLLECTION"
-        if not results_shown:
+        if not results_shown and not state.get("target_sku"):
             return "READY_FOR_SEARCH"
         if not (checkout_started or email_captured):
             return "BROWSING"

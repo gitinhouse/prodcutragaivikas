@@ -28,6 +28,7 @@ class GraphState(MessagesState):
     wheel_size: Optional[str]
     budget: Optional[float]
     style: Optional[str]
+    target_sku: Optional[str] # Dedicated field for precision detail lookups
     
     # --- SYSTEM CONTROL (The Engine) ---
     phase: str # VEHICLE_COLLECTION, READY_FOR_SEARCH, BROWSING, PURCHASE
