@@ -213,7 +213,10 @@ async def controller_node(state: GraphState):
              result["signal_type"] = "RESET"
              result["intent"] = "product_search"
 
-    elif bool(re.search(r"\b(20\d{2}|audi|bmw|civic|honda|mercedes|tesla|toyota|jeep|ford|chevy|dodge|ram|maruti|suzuki|tata|mahindra)\b", user_query)) or bool(re.search(r"\$\d+|under \d+|budget", user_query)) or bool(re.search(r"\b\d{2}x\d+(\.\d+)?\b", user_query)):
+    elif bool(re.search(r"\b(20\d{2}|audi|bmw|civic|honda|mercedes|tesla|toyota|jeep|ford|chevy|dodge|ram|maruti|suzuki|tata|mahindra)\b", user_query)) or \
+         bool(re.search(r"\$\d+|under \d+|budget", user_query)) or \
+         bool(re.search(r"\b\d{2}x\d+(\.\d+)?\b", user_query)) or \
+         bool(re.search(r"\b(black|silver|bronze|chrome|white|gray|gold|gloss|matte|satin|finish|color)\b", user_query)):
         if result.get("intent") not in ["purchase_intent", "product_detail", "needs_clarity"]:
             result["intent"] = "product_search"
             

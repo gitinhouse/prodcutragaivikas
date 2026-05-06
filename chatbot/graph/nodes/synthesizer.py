@@ -155,10 +155,26 @@ async def synthesizer_node(state: GraphState):
     # 5. STRATEGIC OVERRIDES (Hardening)
     final_output = full_content.strip()
 
-    # A. RE-ENGAGEMENT HOOK (Out-of-Scope Recovery)
-    if raw_data.get("apply_reengagement"):
+    # A. RE-ENGAGEMENT HOOK & BRAND IDENTITY
+    is_brand_query = bool(re.search(r"\b(extreme wheels|extreme performance|who are you|represent)\b", user_query.lower()))
+    
+    if is_brand_query:
+        brand_blurb = "I represent Extreme Wheels as your virtual wheel recommendation assistant. We specialize in aftermarket wheels for a wide range of vehicles, making it easy for you to get the right set of wheels and tires. Our online catalog has it all: custom rim and tire packages, factory wheel packages, alloy/forged rims, and accessories. We will beat ALL competitors' prices on any car, truck, or SUV wheels!"
+        if brand_blurb.lower() not in final_output.lower():
+            final_output = f"{brand_blurb}\n\n{final_output}"
+
+    if raw_data.get("apply_reengagement") and products:
         hook = random.choice(VARIATION_POOLS["reengagement_hook"]).format(vehicle_make=vehicle_make)
         final_output = f"{final_output}\n\n{hook}"
+    
+    # B. PHANTOM MENTION PROTECTION
+    # If the LLM uses 'Check out these setups' or similar but products is empty, strip it.
+    if not products:
+        phantom_phrases = ["Check out these setups", "here are the options", "take a look at these", "I've pulled some options", "Check out this selection"]
+        for phrase in phantom_phrases:
+            if phrase.lower() in final_output.lower():
+                 # Replace with a more accurate research-phase phrase
+                 final_output = re.sub(re.escape(phrase), "I'm researching the perfect matches for your build", final_output, flags=re.IGNORECASE)
 
     # B. INTENT ENFORCEMENT
     user_query = state.get("sanitized_input", "").lower()
@@ -190,9 +206,10 @@ async def synthesizer_node(state: GraphState):
 
     
     # 6. UI DUPLICATION PREVENTION
-    # Do not re-render the LARGE card grid if we are just purchasing an already-shown card.
-    # However, for product_detail, we DO want to show the single specific card being discussed.
-    if intent == "purchase_intent" or cta_intent in ["ask_lead_info", "confirm_order_on_file"]:
+    # Do not re-render the LARGE card grid if we are just purchasing or asking follow-up fitment/info questions
+    # about already displayed products.
+    is_follow_up = intent in ["fitment_check", "info_request", "product_detail"] and last_action in ["recommend", "recommendation"]
+    if intent == "purchase_intent" or cta_intent in ["ask_lead_info", "confirm_order_on_file"] or is_follow_up:
         products = []
 
     return {

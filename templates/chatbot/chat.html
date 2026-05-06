@@ -498,15 +498,25 @@
     const landingInput = document.getElementById('landing-message-input');
     const landingBtn = document.getElementById('message-send-btn');
 
-    // Auto-resize textarea
-    function setupAutoResize(el) {
+    // Auto-resize textarea with max height (scroll after ~3 lines)
+    function setupAutoResize(el, submitFn) {
         el.addEventListener('input', () => {
             el.style.height = 'auto';
-            el.style.height = (el.scrollHeight) + 'px';
+            const newHeight = Math.min(el.scrollHeight, 120); // Cap at 120px
+            el.style.height = newHeight + 'px';
+            el.style.overflowY = el.scrollHeight > 120 ? 'auto' : 'hidden';
+        });
+
+        // Enter to submit, Shift+Enter for new line
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submitFn();
+            }
         });
     }
-    setupAutoResize(messageInput);
-    setupAutoResize(landingInput);
+    setupAutoResize(messageInput, () => chatForm.dispatchEvent(new Event('submit')));
+    setupAutoResize(landingInput, handleLandingSubmit);
 
     function createProductGrid(products, hasVehicle = false) {
         const grid = document.createElement('div');

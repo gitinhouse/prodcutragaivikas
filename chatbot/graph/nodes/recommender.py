@@ -133,9 +133,12 @@ async def recommender_node(state: GraphState):
             # --- FINAL SELECTION ---
             display_products = []
             if not is_oos:
-                display_products.append(primary_product)
+                # CRITICAL: For direct SKU lookup that is IN STOCK, show ONLY that product.
+                display_products = [primary_product]
+            else:
+                # If OOS, show alternatives
+                display_products = alternatives
             
-            display_products.extend(alternatives)
             final_selection = display_products[:3]
             
             # Track shown products to avoid duplicates
